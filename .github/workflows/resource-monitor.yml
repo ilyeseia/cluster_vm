@@ -1,11 +1,25 @@
-  # أضف هذا Job في البداية
-  check-quota:
-    name: 💰 Check Resource Quota
+name: 📊 Resource Usage Monitor
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'  # كل 6 ساعات
+  workflow_dispatch:
+    inputs:
+      force-alert:
+        description: 'Force send alert email'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  GMAIL_USER: ${{ secrets.GMAIL_USER }}
+  GMAIL_PASS: ${{ secrets.GMAIL_PASS }}
+
+jobs:
+  monitor-resources:
+    name: 📊 Monitor GitHub Actions Resources
     runs-on: ubuntu-latest
-    timeout-minutes: 5
-    outputs:
-      has-quota: ${{ steps.check.outputs.has-quota }}
-      usage-percentage: ${{ steps.check.outputs.usage-percentage }}
+    timeout-minutes: 10
     
     steps:
       - name: 📥 Checkout
@@ -19,55 +33,292 @@
           sudo apt-get update
           sudo apt-get install -y powershell
 
-      - name: 💰 Check Quota
-        id: check
+      - name: 📊 Check Resource Usage
+        id: check-usage
         shell: pwsh
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
         run: |
-          Write-Host "Checking resource quota..." -ForegroundColor Cyan
+          Write-Host "╔════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
+          Write-Host "║     📊 GITHUB ACTIONS RESOURCE MONITOR                    ║" -ForegroundColor Cyan
+          Write-Host "╚════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
           
           try {
               $headers = @{
                   "Authorization" = "Bearer $env:GITHUB_TOKEN"
                   "Accept" = "application/vnd.github+json"
+                  "X-GitHub-Api-Version" = "2022-11-28"
               }
               
               $owner = $env:GITHUB_REPOSITORY_OWNER
-              $url = "https://api.github.com/users/$owner/settings/billing/actions"
+              $actionsUrl = "https://api.github.com/users/$owner/settings/billing/actions"
               
-              $usage = Invoke-RestMethod -Uri $url -Headers $headers -Method Get
+              Write-Host "`nFetching usage data..." -ForegroundColor Yellow
               
-              $used = $usage.total_minutes_used
-              $total = $usage.included_minutes
-              $remaining = $total - $used
-              $percentage = [math]::Round(($used / $total) * 100, 2)
+              $usage = Invoke-RestMethod -Uri $actionsUrl -Headers $headers -Method Get
               
-              Write-Host "Usage: $used / $total minutes ($percentage%)" -ForegroundColor Cyan
-              Write-Host "Remaining: $remaining minutes" -ForegroundColor Green
+              $usedMinutes = $usage.total_minutes_used
+              $totalMinutes = $usage.included_minutes
+              $remainingMinutes = $totalMinutes - $usedMinutes
+              $percentage = if ($totalMinutes -gt 0) { [math]::Round(($usedMinutes / $totalMinutes) * 100, 2) } else { 0 }
               
-              $hasQuota = $remaining -gt 60  # على الأقل ساعة متبقية
+              Write-Host "`n📊 Usage Statistics:" -ForegroundColor Yellow
+              Write-Host "  • Used: $usedMinutes minutes" -ForegroundColor Cyan
+              Write-Host "  • Total: $totalMinutes minutes" -ForegroundColor Cyan
+              Write-Host "  • Remaining: $remainingMinutes minutes" -ForegroundColor Green
+              Write-Host "  • Percentage: $percentage%" -ForegroundColor $(if($percentage -gt 90){"Red"}elseif($percentage -gt 75){"Yellow"}else{"Green"})
               
-              "has-quota=$($hasQuota.ToString().ToLower())" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-              "usage-percentage=$percentage" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+              # تقدير الأيام المتبقية
+              $daysInMonth = (Get-Date).Day
+              $avgDailyUsage = if ($daysInMonth -gt 0) { $usedMinutes / $daysInMonth } else { 0 }
+              $estimatedDaysLeft = if ($avgDailyUsage -gt 0) { [math]::Floor($remainingMinutes / $avgDailyUsage) } else { 999 }
               
-              if (-not $hasQuota) {
-                  Write-Host "⚠️ WARNING: Low quota! Only $remaining minutes remaining" -ForegroundColor Yellow
+              Write-Host "  • Estimated days left: $estimatedDaysLeft days" -ForegroundColor Cyan
+              
+              # تحديد مستوى التنبيه
+              $alertLevel = "OK"
+              if ($percentage -ge 95) {
+                  $alertLevel = "CRITICAL"
+                  Write-Host "`n🚨 CRITICAL: Quota nearly exhausted!" -ForegroundColor Red
+              } elseif ($percentage -ge 80) {
+                  $alertLevel = "WARNING"
+                  Write-Host "`n⚠️ WARNING: High usage detected!" -ForegroundColor Yellow
+              } else {
+                  Write-Host "`n✅ Usage is within normal limits" -ForegroundColor Green
               }
               
+              # حفظ البيانات
+              "used-minutes=$usedMinutes" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+              "total-minutes=$totalMinutes" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+              "remaining-minutes=$remainingMinutes" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+              "usage-percentage=$percentage" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+              "alert-level=$alertLevel" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+              "estimated-days-left=$estimatedDaysLeft" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+              
+              # حفظ تقرير JSON
+              $report = @{
+                  timestamp = Get-Date -Format 'o'
+                  usedMinutes = $usedMinutes
+                  totalMinutes = $totalMinutes
+                  remainingMinutes = $remainingMinutes
+                  usagePercentage = $percentage
+                  alertLevel = $alertLevel
+                  estimatedDaysLeft = $estimatedDaysLeft
+                  owner = $owner
+              }
+              
+              New-Item -ItemType Directory -Path "reports" -Force | Out-Null
+              $reportFile = "reports/resource-usage-$(Get-Date -Format 'yyyyMMdd-HHmmss').json"
+              $report | ConvertTo-Json -Depth 10 | Set-Content $reportFile
+              
+              Write-Host "`n✅ Report saved: $reportFile" -ForegroundColor Green
+              
           } catch {
-              Write-Host "⚠️ Could not check quota: $_" -ForegroundColor Yellow
-              # افتراض وجود رصيد للسماح بالاستمرار
-              "has-quota=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+              Write-Host "`n❌ Error checking usage: $_" -ForegroundColor Red
+              Write-Host "Error Details: $($_.Exception.Message)" -ForegroundColor Yellow
+              
+              # القيم الافتراضية في حالة الخطأ
+              "used-minutes=0" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+              "total-minutes=2000" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+              "remaining-minutes=2000" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
               "usage-percentage=0" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+              "alert-level=UNKNOWN" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+              "estimated-days-left=999" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           }
 
-  # عدل الـ orchestrator ليعتمد على check-quota
-  orchestrator:
-    name: 🎭 System Orchestrator
-    runs-on: ubuntu-latest
-    needs: check-quota
-    # أضف هذا الشرط
-    if: needs.check-quota.outputs.has-quota == 'true'
-    # ... باقي الكود
+      - name: 📧 Send Email Alert
+        if: |
+          (steps.check-usage.outputs.alert-level == 'WARNING' || 
+           steps.check-usage.outputs.alert-level == 'CRITICAL' ||
+           github.event.inputs.force-alert == 'true') &&
+          env.GMAIL_USER != '' &&
+          env.GMAIL_PASS != ''
+        shell: pwsh
+        env:
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_PASS: ${{ secrets.GMAIL_PASS }}
+          USED_MINUTES: ${{ steps.check-usage.outputs.used-minutes }}
+          TOTAL_MINUTES: ${{ steps.check-usage.outputs.total-minutes }}
+          REMAINING_MINUTES: ${{ steps.check-usage.outputs.remaining-minutes }}
+          USAGE_PERCENTAGE: ${{ steps.check-usage.outputs.usage-percentage }}
+          ALERT_LEVEL: ${{ steps.check-usage.outputs.alert-level }}
+          ESTIMATED_DAYS: ${{ steps.check-usage.outputs.estimated-days-left }}
+          RUN_NUMBER: ${{ github.run_number }}
+          RUN_ID: ${{ github.run_id }}
+          REPO: ${{ github.repository }}
+        run: |
+          Write-Host "╔════════════════════════════════════════════════════════════╗" -ForegroundColor Green
+          Write-Host "║     📧 SENDING EMAIL ALERT                                ║" -ForegroundColor Green
+          Write-Host "╚════════════════════════════════════════════════════════════╝" -ForegroundColor Green
+          
+          $usedMinutes = $env:USED_MINUTES
+          $totalMinutes = $env:TOTAL_MINUTES
+          $remainingMinutes = $env:REMAINING_MINUTES
+          $usagePercentage = $env:USAGE_PERCENTAGE
+          $alertLevel = $env:ALERT_LEVEL
+          $estimatedDays = $env:ESTIMATED_DAYS
+          $runNumber = $env:RUN_NUMBER
+          $runId = $env:RUN_ID
+          $repo = $env:REPO
+          $currentTime = Get-Date -Format 'yyyy-MM-dd HH:mm:ss UTC'
+          
+          Write-Host "Alert Level: $alertLevel" -ForegroundColor Yellow
+          Write-Host "Usage: $usagePercentage%" -ForegroundColor Cyan
+          Write-Host "Remaining: $remainingMinutes minutes" -ForegroundColor Green
+          
+          # تحديد أيقونة ولون التنبيه
+          $alertIcon = if ($alertLevel -eq "CRITICAL") { "🚨" } elseif ($alertLevel -eq "WARNING") { "⚠️" } else { "ℹ️" }
+          $alertColor = if ($alertLevel -eq "CRITICAL") { "#dc3545" } elseif ($alertLevel -eq "WARNING") { "#ffc107" } else { "#17a2b8" }
+          $progressColor = if ($usagePercentage -ge 95) { "#dc3545" } elseif ($usagePercentage -ge 80) { "#ffc107" } else { "#28a745" }
+          
+          # بناء HTML
+          $htmlBody = "<!DOCTYPE html><html><head><meta charset='UTF-8'><style>"
+          $htmlBody += "body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);padding:20px;margin:0;}"
+          $htmlBody += ".container{max-width:700px;margin:0 auto;background:white;border-radius:15px;box-shadow:0 10px 40px rgba(0,0,0,0.3);overflow:hidden;}"
+          $htmlBody += ".header{background:$alertColor;color:white;padding:30px;text-align:center;}"
+          $htmlBody += ".header h1{margin:0;font-size:32px;}"
+          $htmlBody += ".alert-icon{font-size:48px;margin:10px 0;}"
+          $htmlBody += ".content{padding:30px;}"
+          $htmlBody += ".alert-message{background:#fff3cd;border-left:5px solid #ffc107;padding:20px;margin:20px 0;border-radius:5px;}"
+          $htmlBody += ".critical-message{background:#f8d7da;border-left-color:#dc3545;}"
+          $htmlBody += ".usage-card{background:linear-gradient(135deg,#f5f7fa 0%,#c3cfe2 100%);padding:20px;margin:15px 0;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,0.1);}"
+          $htmlBody += ".progress-bar-container{background:#e9ecef;border-radius:10px;height:30px;overflow:hidden;margin:10px 0;position:relative;}"
+          $htmlBody += ".progress-bar{height:100%;background:$progressColor;display:flex;align-items:center;justify-content:center;font-weight:bold;color:white;}"
+          $htmlBody += ".stat-row{display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid rgba(0,0,0,0.1);}"
+          $htmlBody += ".stat-label{font-weight:600;color:#555;}"
+          $htmlBody += ".stat-value{font-family:'Courier New',monospace;background:white;padding:5px 12px;border-radius:5px;font-weight:bold;}"
+          $htmlBody += ".recommendations{background:#d1ecf1;border-left:5px solid #17a2b8;padding:20px;margin:20px 0;border-radius:5px;}"
+          $htmlBody += ".footer{background:#f8f9fa;padding:20px;text-align:center;color:#6c757d;font-size:13px;}"
+          $htmlBody += ".btn{display:inline-block;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);color:white;padding:15px 40px;text-decoration:none;border-radius:30px;margin:10px;font-weight:bold;}"
+          $htmlBody += "</style></head><body><div class='container'>"
+          
+          # Header
+          $htmlBody += "<div class='header'><div class='alert-icon'>$alertIcon</div>"
+          $htmlBody += "<h1>GitHub Actions Resource Alert</h1>"
+          $htmlBody += "<p style='margin:5px 0;opacity:0.9;'>$alertLevel Alert Level</p>"
+          $htmlBody += "<p style='font-size:12px;margin-top:10px;'>$currentTime</p></div>"
+          
+          # Content
+          $htmlBody += "<div class='content'>"
+          
+          # Alert Message
+          if ($alertLevel -eq "CRITICAL") {
+              $htmlBody += "<div class='alert-message critical-message'>"
+              $htmlBody += "<h3 style='margin-top:0;color:#721c24;'>🚨 CRITICAL: Immediate Action Required!</h3>"
+              $htmlBody += "<p><strong>Your GitHub Actions quota is nearly exhausted!</strong></p>"
+              $htmlBody += "<p>You have less than <strong>$remainingMinutes minutes</strong> remaining. Please backup your work immediately.</p>"
+              $htmlBody += "</div>"
+          } elseif ($alertLevel -eq "WARNING") {
+              $htmlBody += "<div class='alert-message'>"
+              $htmlBody += "<h3 style='margin-top:0;color:#856404;'>⚠️ WARNING: Resource Usage High</h3>"
+              $htmlBody += "<p><strong>Your GitHub Actions usage is approaching the limit.</strong></p>"
+              $htmlBody += "<p>You have <strong>$remainingMinutes minutes</strong> remaining. Consider optimizing workflows.</p>"
+              $htmlBody += "</div>"
+          }
+          
+          # Usage Card
+          $htmlBody += "<div class='usage-card'>"
+          $htmlBody += "<h3 style='margin-top:0;'>⚡ GitHub Actions Minutes</h3>"
+          $htmlBody += "<div class='progress-bar-container'>"
+          $htmlBody += "<div class='progress-bar' style='width:$usagePercentage%;'>$usagePercentage%</div>"
+          $htmlBody += "</div>"
+          $htmlBody += "<div class='stat-row'><span class='stat-label'>Used:</span>"
+          $htmlBody += "<span class='stat-value' style='color:#dc3545;'>$usedMinutes minutes</span></div>"
+          $htmlBody += "<div class='stat-row'><span class='stat-label'>Total Included:</span>"
+          $htmlBody += "<span class='stat-value' style='color:#17a2b8;'>$totalMinutes minutes</span></div>"
+          $htmlBody += "<div class='stat-row'><span class='stat-label'>Remaining:</span>"
+          $htmlBody += "<span class='stat-value' style='color:#28a745;'>$remainingMinutes minutes</span></div>"
+          $htmlBody += "<div class='stat-row'><span class='stat-label'>Estimated Days Left:</span>"
+          $htmlBody += "<span class='stat-value' style='color:#ffc107;'>$estimatedDays days</span></div>"
+          $htmlBody += "</div>"
+          
+          # Recommendations
+          $htmlBody += "<div class='recommendations'><h3 style='margin-top:0;color:#0c5460;'>💡 Recommendations:</h3><ul>"
+          if ($alertLevel -eq "CRITICAL") {
+              $htmlBody += "<li><strong>URGENT:</strong> Backup all important data immediately</li>"
+              $htmlBody += "<li><strong>Disable</strong> non-critical scheduled workflows</li>"
+              $htmlBody += "<li><strong>Consider upgrading</strong> to a paid plan</li>"
+          } elseif ($alertLevel -eq "WARNING") {
+              $htmlBody += "<li>Review and optimize workflow configurations</li>"
+              $htmlBody += "<li>Reduce workflow frequency where possible</li>"
+              $htmlBody += "<li>Use workflow concurrency limits</li>"
+              $htmlBody += "<li>Monitor usage daily</li>"
+          }
+          $htmlBody += "</ul></div>"
+          
+          # Action Button
+          $htmlBody += "<div style='text-align:center;margin:30px 0;'>"
+          $htmlBody += "<a href='https://github.com/settings/billing' class='btn'>View Billing Dashboard</a>"
+          $htmlBody += "</div></div>"
+          
+          # Footer
+          $htmlBody += "<div class='footer'>"
+          $htmlBody += "<p>🤖 Automated Resource Monitor | GitHub Actions</p>"
+          $htmlBody += "<p><a href='https://github.com/$repo/actions/runs/$runId' style='color:#667eea;text-decoration:none;'>View Workflow Run #$runNumber</a></p>"
+          $htmlBody += "<p style='margin-top:15px;font-size:11px;color:#adb5bd;'>This is an automated alert. Please do not reply.</p>"
+          $htmlBody += "</div></div></body></html>"
+          
+          # Send Email
+          try {
+              $securePass = ConvertTo-SecureString $env:GMAIL_PASS -AsPlainText -Force
+              $credential = New-Object System.Management.Automation.PSCredential($env:GMAIL_USER, $securePass)
+              
+              $subject = "[$alertLevel] GitHub Actions Resource Alert - $usagePercentage% Used"
+              
+              Send-MailMessage `
+                  -From $env:GMAIL_USER `
+                  -To $env:GMAIL_USER `
+                  -Subject $subject `
+                  -Body $htmlBody `
+                  -BodyAsHtml `
+                  -SmtpServer "smtp.gmail.com" `
+                  -Port 587 `
+                  -UseSsl `
+                  -Credential $credential
+              
+              Write-Host "✅ Email sent successfully to: $($env:GMAIL_USER)" -ForegroundColor Green
+              
+          } catch {
+              Write-Host "❌ Failed to send email: $_" -ForegroundColor Red
+              Write-Host "Please check your Gmail credentials and App Password" -ForegroundColor Yellow
+          }
+
+      - name: 📤 Upload Usage Report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: resource-usage-report-${{ github.run_number }}
+          path: reports/*.json
+          retention-days: 30
+
+      - name: 📝 Create Job Summary
+        if: always()
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+          # 📊 Resource Usage Monitor Report
+          
+          ## Usage Statistics
+          
+          | Metric | Value |
+          |--------|-------|
+          | Used | ${{ steps.check-usage.outputs.used-minutes }} minutes |
+          | Total | ${{ steps.check-usage.outputs.total-minutes }} minutes |
+          | Remaining | ${{ steps.check-usage.outputs.remaining-minutes }} minutes |
+          | Usage | ${{ steps.check-usage.outputs.usage-percentage }}% |
+          | Alert Level | ${{ steps.check-usage.outputs.alert-level }} |
+          | Estimated Days Left | ${{ steps.check-usage.outputs.estimated-days-left }} days |
+          
+          ## Status
+          
+          ${{ steps.check-usage.outputs.alert-level == 'CRITICAL' && '🚨 **CRITICAL**: Immediate action required!' || steps.check-usage.outputs.alert-level == 'WARNING' && '⚠️ **WARNING**: High usage detected' || '✅ Usage is within normal limits' }}
+          
+          ## Actions
+          
+          - [View Billing Dashboard](https://github.com/settings/billing)
+          - [View Actions Usage](https://github.com/${{ github.repository }}/actions)
+          - Check your email for detailed report
+          
+          ---
+          *Generated at: $(date -u)*
+          EOF
