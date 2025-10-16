@@ -1,1 +1,31 @@
+name: 🏥 Continuous Health Check
 
+on:
+  schedule:
+    - cron: '*/15 * * * *'  # كل 15 دقيقة
+  workflow_dispatch:
+
+jobs:
+  quick-health-check:
+    name: Quick Health Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: 🏥 Health Check
+        shell: pwsh
+        run: |
+          Write-Host "🏥 Quick Health Check..." -ForegroundColor Cyan
+          
+          $config = Get-Content '.github/system-config.json' | ConvertFrom-Json
+          $vmsState = Get-Content '.github/example-vms-state.json' | ConvertFrom-Json
+          
+          $health = $vmsState.statistics.systemHealth
+          Write-Host "System Health: $health" -ForegroundColor $(if($health -eq 'good'){'Green'}else{'Yellow'})
+          
+          if ($health -ne 'good') {
+              Write-Host "⚠️ System health degraded!" -ForegroundColor Yellow
+              exit 1
+          }
