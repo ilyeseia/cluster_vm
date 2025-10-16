@@ -1,0 +1,135 @@
+name: 🔗 Tailscale VPN Deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      send-email:
+        description: 'Send credentials email'
+        required: true
+        type: boolean
+        default: true
+      recipient-email:
+        description: 'Recipient email address'
+        required: false
+        default: ''
+  schedule:
+    - cron: '0 */6 * * *'  # كل 6 ساعات
+  push:
+    branches: [ main ]
+    paths:
+      - 'scripts/tailscale-setup.ps1'
+      - 'scripts/email-notifier.ps1'
+
+env:
+  TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
+  SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
+  SMTP_PORT: ${{ secrets.SMTP_PORT }}
+  SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+  SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+  NOTIFICATION_EMAIL: ${{ secrets.NOTIFICATION_EMAIL }}
+
+jobs:
+  tailscale-setup:
+    name: 🔗 Setup Tailscale Network
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup PowerShell
+        shell: bash
+        run: |
+          wget -q https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/packages-microsoft-prod.deb
+          sudo dpkg -i packages-microsoft-prod.deb
+          sudo apt-get update
+          sudo apt-get install -y powershell
+
+      - name: 🔗 Install Tailscale
+        shell: bash
+        run: |
+          curl -fsSL https://tailscale.com/install.sh | sh
+          
+      - name: 🌐 Connect to Tailscale Network
+        shell: bash
+        run: |
+          sudo tailscale up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=github-runner-${{ github.run_number }}
+          
+      - name: 📊 Get Tailscale Status
+        shell: pwsh
+        run: |
+          Write-Host "🔗 Tailscale Network Status:" -ForegroundColor Cyan
+          sudo tailscale status
+          
+      - name: 🔧 Setup VMs with Tailscale
+        shell: pwsh
+        run: |
+          Write-Host "🔧 Configuring Tailscale on VMs..." -ForegroundColor Yellow
+          pwsh -File scripts/tailscale-setup.ps1 -Action install
+
+      - name: 📋 List Tailscale Devices
+        shell: pwsh
+        run: |
+          pwsh -File scripts/tailscale-setup.ps1 -Action list-devices
+
+      - name: 🔐 Generate VM Credentials
+        shell: pwsh
+        run: |
+          pwsh -File scripts/tailscale-setup.ps1 -Action generate-report
+
+      - name: 📤 Upload Credentials Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: vm-credentials-${{ github.run_number }}
+          path: results/vm-credentials-*.json
+          retention-days: 7
+
+      - name: 📧 Send Email Notification
+        if: github.event.inputs.send-email == 'true' || github.event_name == 'schedule'
+        shell: pwsh
+        run: |
+          $recipientEmail = "${{ github.event.inputs.recipient-email }}"
+          if ([string]::IsNullOrEmpty($recipientEmail)) {
+              $recipientEmail = "${{ secrets.NOTIFICATION_EMAIL }}"
+          }
+          
+          Write-Host "📧 Sending credentials to: $recipientEmail" -ForegroundColor Cyan
+          
+          pwsh -File scripts/email-notifier.ps1 -To $recipientEmail
+
+      - name: 🧹 Cleanup
+        if: always()
+        shell: bash
+        run: |
+          sudo tailscale down
+
+  summary:
+    name: 📋 Deployment Summary
+    runs-on: ubuntu-latest
+    needs: tailscale-setup
+    if: always()
+    
+    steps:
+      - name: 📊 Generate Summary
+        shell: pwsh
+        run: |
+          Write-Host "╔════════════════════════════════════════════════════════════╗" -ForegroundColor Green
+          Write-Host "║                                                            ║" -ForegroundColor Green
+          Write-Host "║       ✅ TAILSCALE DEPLOYMENT COMPLETED ✅                ║" -ForegroundColor Green
+          Write-Host "║                                                            ║" -ForegroundColor Green
+          Write-Host "╚════════════════════════════════════════════════════════════╝" -ForegroundColor Green
+          
+          Write-Host "`n📊 Deployment Status:" -ForegroundColor Yellow
+          Write-Host "  • Tailscale Setup: ${{ needs.tailscale-setup.result }}" -ForegroundColor Cyan
+          Write-Host "  • Timestamp: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" -ForegroundColor Cyan
+
+      - name: 🔔 Notify on Failure
+        if: failure()
+        run: |
+          echo "::error::❌ Tailscale deployment failed!"
+
+      - name: 🎉 Success Notification
+        if: success()
+        run: |
+          echo "::notice::✅ Tailscale network configured successfully!"
