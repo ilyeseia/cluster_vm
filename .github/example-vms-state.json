@@ -1,72 +1,203 @@
 {
+  "version": "1.0.0",
+  "lastUpdated": "2024-01-15T12:00:00Z",
+  "clusterId": "cluster-prod-001",
+  "environment": "production",
+  
   "vms": [
     {
       "vmId": "vm-20240115-120000-abc123",
+      "hostname": "master-vm-001",
+      "ipAddress": "192.168.1.101",
       "createdAt": "2024-01-15T10:00:00Z",
+      "expiresAt": "2024-01-15T10:06:00Z",
       "status": "running",
       "role": "master",
+      "priority": 1,
       "remainingTime": 260,
-      "jobsCompleted": 8,
-      "lastHeartbeat": "2024-01-15T11:58:00Z",
+      "uptime": 100,
+      
       "performance": {
         "cpuUsage": 65.5,
         "memoryUsage": 72.3,
-        "diskUsage": 45.0,
-        "networkUsage": 23.5
+        "diskUsage": 45.2,
+        "networkIn": 125.6,
+        "networkOut": 98.3,
+        "iops": 1250,
+        "latency": 12.5
       },
-      "tags": {
-        "environment": "production",
+      
+      "health": {
+        "status": "healthy",
+        "lastCheck": "2024-01-15T11:59:00Z",
+        "checks": {
+          "cpu": "ok",
+          "memory": "ok",
+          "disk": "ok",
+          "network": "ok"
+        }
+      },
+      
+      "jobs": {
+        "completed": 45,
+        "running": 2,
+        "pending": 3,
+        "failed": 1,
+        "successRate": 97.8
+      },
+      
+      "metadata": {
         "region": "us-east-1",
-        "tier": "master"
+        "zone": "us-east-1a",
+        "instanceType": "t3.medium",
+        "tags": {
+          "Environment": "production",
+          "Role": "master",
+          "ManagedBy": "persistent-system"
+        }
       }
     },
     {
-      "vmId": "vm-20240115-120200-def456",
-      "createdAt": "2024-01-15T10:02:00Z",
+      "vmId": "vm-20240115-113000-def456",
+      "hostname": "worker-vm-001",
+      "ipAddress": "192.168.1.102",
+      "createdAt": "2024-01-15T11:30:00Z",
+      "expiresAt": "2024-01-15T11:36:00Z",
       "status": "running",
       "role": "worker",
-      "remainingTime": 258,
-      "jobsCompleted": 5,
-      "lastHeartbeat": "2024-01-15T11:59:00Z",
+      "priority": 2,
+      "remainingTime": 190,
+      "uptime": 30,
+      
       "performance": {
-        "cpuUsage": 52.3,
-        "memoryUsage": 61.5,
-        "diskUsage": 38.0,
-        "networkUsage": 18.2
+        "cpuUsage": 58.2,
+        "memoryUsage": 68.7,
+        "diskUsage": 42.1,
+        "networkIn": 98.4,
+        "networkOut": 76.2,
+        "iops": 980,
+        "latency": 15.3
       },
-      "tags": {
-        "environment": "production",
+      
+      "health": {
+        "status": "healthy",
+        "lastCheck": "2024-01-15T11:59:00Z",
+        "checks": {
+          "cpu": "ok",
+          "memory": "ok",
+          "disk": "ok",
+          "network": "ok"
+        }
+      },
+      
+      "jobs": {
+        "completed": 32,
+        "running": 1,
+        "pending": 2,
+        "failed": 0,
+        "successRate": 100.0
+      },
+      
+      "metadata": {
         "region": "us-east-1",
-        "tier": "worker"
+        "zone": "us-east-1b",
+        "instanceType": "t3.medium",
+        "tags": {
+          "Environment": "production",
+          "Role": "worker",
+          "ManagedBy": "persistent-system"
+        }
       }
     },
     {
-      "vmId": "vm-20240115-120400-ghi789",
-      "createdAt": "2024-01-15T10:04:00Z",
+      "vmId": "vm-20240115-114500-ghi789",
+      "hostname": "worker-vm-002",
+      "ipAddress": "192.168.1.103",
+      "createdAt": "2024-01-15T11:45:00Z",
+      "expiresAt": "2024-01-15T11:51:00Z",
       "status": "running",
       "role": "worker",
-      "remainingTime": 256,
-      "jobsCompleted": 3,
-      "lastHeartbeat": "2024-01-15T11:59:30Z",
+      "priority": 3,
+      "remainingTime": 100,
+      "uptime": 15,
+      
       "performance": {
-        "cpuUsage": 48.7,
-        "memoryUsage": 58.2,
-        "diskUsage": 42.0,
-        "networkUsage": 15.7
+        "cpuUsage": 48.9,
+        "memoryUsage": 55.2,
+        "diskUsage": 38.5,
+        "networkIn": 85.7,
+        "networkOut": 62.1,
+        "iops": 750,
+        "latency": 18.7
       },
-      "tags": {
-        "environment": "production",
+      
+      "health": {
+        "status": "healthy",
+        "lastCheck": "2024-01-15T11:59:00Z",
+        "checks": {
+          "cpu": "ok",
+          "memory": "ok",
+          "disk": "ok",
+          "network": "ok"
+        }
+      },
+      
+      "jobs": {
+        "completed": 18,
+        "running": 3,
+        "pending": 1,
+        "failed": 0,
+        "successRate": 100.0
+      },
+      
+      "metadata": {
         "region": "us-east-1",
-        "tier": "worker"
+        "zone": "us-east-1c",
+        "instanceType": "t3.medium",
+        "tags": {
+          "Environment": "production",
+          "Role": "worker",
+          "ManagedBy": "persistent-system"
+        }
       }
     }
   ],
-  "lastCheck": "2024-01-15T12:00:00Z",
-  "totalVmsCreated": 3,
+  
   "statistics": {
-    "averageCpuUsage": 55.5,
-    "averageMemoryUsage": 64.0,
-    "totalJobsCompleted": 16,
-    "systemHealth": "excellent"
-  }
+    "totalVMs": 3,
+    "runningVMs": 3,
+    "stoppedVMs": 0,
+    "failedVMs": 0,
+    "averageCpuUsage": 57.5,
+    "averageMemoryUsage": 65.4,
+    "averageDiskUsage": 41.9,
+    "totalJobsCompleted": 95,
+    "totalJobsRunning": 6,
+    "totalJobsPending": 6,
+    "totalJobsFailed": 1,
+    "overallSuccessRate": 98.9,
+    "systemHealth": "good",
+    "clusterEfficiency": 92.3
+  },
+  
+  "events": [
+    {
+      "timestamp": "2024-01-15T10:00:00Z",
+      "type": "vm-created",
+      "vmId": "vm-20240115-120000-abc123",
+      "message": "Master VM created successfully"
+    },
+    {
+      "timestamp": "2024-01-15T10:01:00Z",
+      "type": "master-elected",
+      "vmId": "vm-20240115-120000-abc123",
+      "message": "New master elected"
+    },
+    {
+      "timestamp": "2024-01-15T11:30:00Z",
+      "type": "vm-created",
+      "vmId": "vm-20240115-113000-def456",
+      "message": "Worker VM created successfully"
+    }
+  ]
 }
