@@ -14,7 +14,7 @@ on:
         type: string
         default: ''
   schedule:
-    - cron: '0 */6 * * *'  # كل 6 ساعات
+    - cron: '0 */6 * * *'
   push:
     branches: [ main ]
     paths:
@@ -23,23 +23,17 @@ on:
 
 env:
   TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
-  SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
-  SMTP_PORT: ${{ secrets.SMTP_PORT }}
-  SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
-  SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
-  NOTIFICATION_EMAIL: ${{ secrets.NOTIFICATION_EMAIL }}
+  GMAIL_USER: ${{ secrets.GMAIL_USER }}
+  GMAIL_PASS: ${{ secrets.GMAIL_PASS }}
 
 jobs:
-  # ═══════════════════════════════════════════════════════════════
-  # Job 1: Validate Configuration
-  # ═══════════════════════════════════════════════════════════════
   validate-config:
     name: ✅ Validate Configuration
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
       has-tailscale-key: ${{ steps.check.outputs.has-tailscale }}
-      has-smtp-config: ${{ steps.check.outputs.has-smtp }}
+      has-gmail-config: ${{ steps.check.outputs.has-gmail }}
       recipient-email: ${{ steps.check.outputs.recipient }}
     
     steps:
@@ -56,7 +50,7 @@ jobs:
           
           $hasErrors = $false
           
-          # التحقق من Tailscale Auth Key
+          # التحقق من Tailscale
           if ("${{ secrets.TAILSCALE_AUTH_KEY }}" -eq "") {
               Write-Host "❌ TAILSCALE_AUTH_KEY is not set!" -ForegroundColor Red
               $hasErrors = $true
@@ -66,14 +60,27 @@ jobs:
               "has-tailscale=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           }
           
-          # التحقق من SMTP Configuration
-          if ("${{ secrets.SMTP_SERVER }}" -eq "" -or "${{ secrets.SMTP_USERNAME }}" -eq "" -or "${{ secrets.SMTP_PASSWORD }}" -eq "") {
-              Write-Host "❌ SMTP configuration incomplete!" -ForegroundColor Red
-              $hasErrors = $true
-              "has-smtp=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          # التحقق من Gmail
+          $gmailComplete = $true
+          if ("${{ secrets.GMAIL_USER }}" -eq "") {
+              Write-Host "❌ GMAIL_USER is not set!" -ForegroundColor Red
+              $gmailComplete = $false
           } else {
-              Write-Host "✅ SMTP configuration is complete" -ForegroundColor Green
-              "has-smtp=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+              Write-Host "✅ GMAIL_USER is configured" -ForegroundColor Green
+          }
+          
+          if ("${{ secrets.GMAIL_PASS }}" -eq "") {
+              Write-Host "❌ GMAIL_PASS is not set!" -ForegroundColor Red
+              $gmailComplete = $false
+          } else {
+              Write-Host "✅ GMAIL_PASS is configured" -ForegroundColor Green
+          }
+          
+          if ($gmailComplete) {
+              "has-gmail=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          } else {
+              "has-gmail=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+              Write-Host "⚠️ Gmail configuration incomplete - email will be skipped" -ForegroundColor Yellow
           }
           
           # تحديد البريد المستلم
@@ -81,43 +88,32 @@ jobs:
           
           if ("${{ github.event.inputs.recipient-email }}" -ne "") {
               $recipientEmail = "${{ github.event.inputs.recipient-email }}"
-              Write-Host "✅ Recipient email from input: $recipientEmail" -ForegroundColor Green
-          } elseif ("${{ secrets.NOTIFICATION_EMAIL }}" -ne "") {
-              $recipientEmail = "${{ secrets.NOTIFICATION_EMAIL }}"
-              Write-Host "✅ Recipient email from secret: $recipientEmail" -ForegroundColor Green
-          } elseif ("${{ secrets.SMTP_USERNAME }}" -ne "") {
-              $recipientEmail = "${{ secrets.SMTP_USERNAME }}"
-              Write-Host "⚠️ Using SMTP username as recipient: $recipientEmail" -ForegroundColor Yellow
-          } else {
-              Write-Host "❌ No recipient email found!" -ForegroundColor Red
-              $hasErrors = $true
+              Write-Host "✅ Recipient from input: $recipientEmail" -ForegroundColor Green
+          } elseif ("${{ secrets.GMAIL_USER }}" -ne "") {
+              $recipientEmail = "${{ secrets.GMAIL_USER }}"
+              Write-Host "✅ Recipient from GMAIL_USER: $recipientEmail" -ForegroundColor Green
           }
           
           "recipient=$recipientEmail" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           
-          # النتيجة النهائية
+          # ملخص
+          Write-Host "`n📋 Configuration Summary:" -ForegroundColor Yellow
+          Write-Host "  • Tailscale: $(if('${{ secrets.TAILSCALE_AUTH_KEY }}' -ne ''){'✅'}else{'❌'})" -ForegroundColor Cyan
+          Write-Host "  • Gmail User: $(if('${{ secrets.GMAIL_USER }}' -ne ''){'✅'}else{'❌'})" -ForegroundColor Cyan
+          Write-Host "  • Gmail Pass: $(if('${{ secrets.GMAIL_PASS }}' -ne ''){'✅'}else{'❌'})" -ForegroundColor Cyan
+          Write-Host "  • Recipient: $recipientEmail" -ForegroundColor Cyan
+          
           if ($hasErrors) {
               Write-Host "`n❌ Configuration validation failed!" -ForegroundColor Red
-              Write-Host "`nPlease configure the following secrets:" -ForegroundColor Yellow
-              Write-Host "  • TAILSCALE_AUTH_KEY" -ForegroundColor Cyan
-              Write-Host "  • SMTP_SERVER" -ForegroundColor Cyan
-              Write-Host "  • SMTP_PORT" -ForegroundColor Cyan
-              Write-Host "  • SMTP_USERNAME" -ForegroundColor Cyan
-              Write-Host "  • SMTP_PASSWORD" -ForegroundColor Cyan
-              Write-Host "  • NOTIFICATION_EMAIL (recommended)" -ForegroundColor Cyan
               exit 1
-          } else {
-              Write-Host "`n✅ All configurations are valid!" -ForegroundColor Green
           }
+          
+          Write-Host "`n✅ Configuration validation passed!" -ForegroundColor Green
 
-  # ═══════════════════════════════════════════════════════════════
-  # Job 2: Tailscale Setup
-  # ═══════════════════════════════════════════════════════════════
   tailscale-setup:
     name: 🔗 Setup Tailscale Network
     runs-on: ubuntu-latest
     needs: validate-config
-    if: needs.validate-config.outputs.has-tailscale-key == 'true'
     timeout-minutes: 15
     
     steps:
@@ -131,82 +127,88 @@ jobs:
           sudo dpkg -i packages-microsoft-prod.deb
           sudo apt-get update
           sudo apt-get install -y powershell
+          pwsh --version
 
       - name: 🔗 Install Tailscale
         shell: bash
         run: |
+          echo "📦 Installing Tailscale..."
           curl -fsSL https://tailscale.com/install.sh | sh
+          echo "✅ Tailscale installed"
           
       - name: 🌐 Connect to Tailscale Network
         shell: bash
         run: |
-          sudo tailscale up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=github-runner-${{ github.run_number }}
-          echo "✅ Connected to Tailscale network"
+          echo "🔗 Connecting to Tailscale..."
+          sudo tailscale up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} \
+            --hostname=github-runner-${{ github.run_number }} \
+            --accept-routes
+          echo "✅ Connected successfully"
           
       - name: 📊 Get Tailscale Status
         shell: bash
         run: |
-          echo "🔗 Tailscale Network Status:"
-          sudo tailscale status
+          echo "╔════════════════════════════════════════════════════════════╗"
+          echo "║           🔗 TAILSCALE NETWORK STATUS                     ║"
+          echo "╚════════════════════════════════════════════════════════════╝"
           echo ""
           echo "📍 My Tailscale IP:"
           sudo tailscale ip -4
+          echo ""
+          echo "🌐 Connected Devices:"
+          sudo tailscale status
           
-      - name: 🔧 Setup VMs with Tailscale
-        shell: pwsh
-        run: |
-          Write-Host "╔════════════════════════════════════════════════════════════╗" -ForegroundColor Yellow
-          Write-Host "║       🔧 CONFIGURING TAILSCALE ON VMS                     ║" -ForegroundColor Yellow
-          Write-Host "╚════════════════════════════════════════════════════════════╝" -ForegroundColor Yellow
-          
-          if (Test-Path 'scripts/tailscale-setup.ps1') {
-              pwsh -File scripts/tailscale-setup.ps1 -Action install
-          } else {
-              Write-Host "⚠️ Tailscale setup script not found, skipping..." -ForegroundColor Yellow
-          }
-
-      - name: 📋 List Tailscale Devices
-        shell: pwsh
-        run: |
-          if (Test-Path 'scripts/tailscale-setup.ps1') {
-              pwsh -File scripts/tailscale-setup.ps1 -Action list-devices
-          } else {
-              Write-Host "📋 Listing devices manually..." -ForegroundColor Cyan
-              sudo tailscale status
-          }
-
       - name: 🔐 Generate VM Credentials
         shell: pwsh
         run: |
-          Write-Host "╔════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-          Write-Host "║       🔐 GENERATING VM CREDENTIALS                        ║" -ForegroundColor Cyan
-          Write-Host "╚════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
+          Write-Host "╔════════════════════════════════════════════════════════════╗" -ForegroundColor Magenta
+          Write-Host "║       🔐 GENERATING VM CREDENTIALS                        ║" -ForegroundColor Magenta
+          Write-Host "╚════════════════════════════════════════════════════════════╝" -ForegroundColor Magenta
           
-          if (Test-Path 'scripts/tailscale-setup.ps1') {
-              pwsh -File scripts/tailscale-setup.ps1 -Action generate-report
-          } else {
-              Write-Host "⚠️ Script not found, creating basic credentials..." -ForegroundColor Yellow
-              
-              # إنشاء credentials بسيطة
-              New-Item -ItemType Directory -Path "results" -Force | Out-Null
-              
-              $credentials = @(
-                  @{
-                      vmId = "vm-master-001"
-                      role = "master"
-                      status = "running"
-                      publicIP = "N/A"
-                      tailscaleIP = "100.64.0.1"
-                      username = "admin"
-                      password = "ChangeMe123!"
-                      sshCommand = "ssh admin@100.64.0.1"
-                      createdAt = (Get-Date -Format 'o')
-                  }
-              )
-              
-              $credentials | ConvertTo-Json -Depth 10 | Set-Content "results/vm-credentials-$(Get-Date -Format 'yyyyMMdd-HHmmss').json"
-              Write-Host "✅ Basic credentials created" -ForegroundColor Green
-          }
+          # إنشاء المجلد
+          New-Item -ItemType Directory -Path "results" -Force | Out-Null
+          
+          # الحصول على Tailscale IP
+          $tailscaleIP = (sudo tailscale ip -4).Trim()
+          
+          Write-Host "`n📍 Tailscale IP: $tailscaleIP" -ForegroundColor Cyan
+          
+          # توليد كلمة مرور عشوائية قوية
+          $password = -join ((65..90) + (97..122) + (48..57) + (33..47) | Get-Random -Count 20 | ForEach-Object {[char]$_})
+          
+          # إنشاء بيانات اعتماد
+          $credentials = @(
+              @{
+                  vmId = "github-runner-${{ github.run_number }}"
+                  role = "runner"
+                  status = "running"
+                  hostname = "github-runner-${{ github.run_number }}"
+                  publicIP = "N/A (GitHub-hosted)"
+                  tailscaleIP = $tailscaleIP
+                  username = "admin"
+                  password = $password
+                  sshCommand = "ssh admin@$tailscaleIP"
+                  tailscaleNetwork = "Connected"
+                  createdAt = (Get-Date -Format 'o')
+                  expiresAt = ((Get-Date).AddHours(6).ToString('o'))
+                  note = "GitHub Actions Runner - Connected via Tailscale VPN"
+              }
+          )
+          
+          # حفظ بيانات الاعتماد
+          $credFile = "results/vm-credentials-$(Get-Date -Format 'yyyyMMdd-HHmmss').json"
+          $credentials | ConvertTo-Json -Depth 10 | Set-Content $credFile
+          
+          Write-Host "`n✅ Credentials generated successfully" -ForegroundColor Green
+          Write-Host "📄 Saved to: $credFile" -ForegroundColor Cyan
+          
+          # عرض البيانات
+          Write-Host "`n📋 Generated Credentials:" -ForegroundColor Yellow
+          Write-Host "  • VM ID: $($credentials[0].vmId)" -ForegroundColor Cyan
+          Write-Host "  • Tailscale IP: $($credentials[0].tailscaleIP)" -ForegroundColor Green
+          Write-Host "  • Username: $($credentials[0].username)" -ForegroundColor Cyan
+          Write-Host "  • Password: $($credentials[0].password)" -ForegroundColor Yellow
+          Write-Host "  • SSH: $($credentials[0].sshCommand)" -ForegroundColor Cyan
 
       - name: 📤 Upload Credentials Report
         uses: actions/upload-artifact@v4
@@ -218,50 +220,200 @@ jobs:
       - name: 📧 Send Email Notification
         if: |
           (github.event.inputs.send-email == 'true' || github.event_name == 'schedule') &&
-          needs.validate-config.outputs.has-smtp-config == 'true'
+          needs.validate-config.outputs.has-gmail-config == 'true'
         shell: pwsh
         env:
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_PASS: ${{ secrets.GMAIL_PASS }}
           RECIPIENT_EMAIL: ${{ needs.validate-config.outputs.recipient-email }}
         run: |
-          Write-Host "╔════════════════════════════════════════════════════════════╗" -ForegroundColor Magenta
-          Write-Host "║       📧 SENDING EMAIL NOTIFICATION                       ║" -ForegroundColor Magenta
-          Write-Host "╚════════════════════════════════════════════════════════════╝" -ForegroundColor Magenta
+          Write-Host "╔════════════════════════════════════════════════════════════╗" -ForegroundColor Green
+          Write-Host "║       📧 SENDING EMAIL NOTIFICATION                       ║" -ForegroundColor Green
+          Write-Host "╚════════════════════════════════════════════════════════════╝" -ForegroundColor Green
           
           $recipientEmail = $env:RECIPIENT_EMAIL
           
+          Write-Host "`n📧 Email Configuration:" -ForegroundColor Yellow
+          Write-Host "  • From: $env:GMAIL_USER" -ForegroundColor Cyan
+          Write-Host "  • To: $recipientEmail" -ForegroundColor Cyan
+          Write-Host "  • SMTP: smtp.gmail.com:587" -ForegroundColor Cyan
+          
           if ([string]::IsNullOrWhiteSpace($recipientEmail)) {
-              Write-Host "❌ Error: No recipient email available!" -ForegroundColor Red
-              exit 1
+              Write-Host "`n❌ No recipient email!" -ForegroundColor Red
+              exit 0
           }
           
-          Write-Host "✉️  Recipient: $recipientEmail" -ForegroundColor Cyan
+          # تحميل بيانات الاعتماد
+          $credFile = Get-ChildItem "results/vm-credentials-*.json" | 
+              Sort-Object LastWriteTime -Descending | 
+              Select-Object -First 1
           
-          if (Test-Path 'scripts/email-notifier.ps1') {
-              try {
-                  pwsh -File scripts/email-notifier.ps1 -To $recipientEmail
-                  Write-Host "✅ Email sent successfully!" -ForegroundColor Green
-              } catch {
-                  Write-Host "❌ Failed to send email: $_" -ForegroundColor Red
-                  Write-Host "Continuing workflow..." -ForegroundColor Yellow
+          if (-not $credFile) {
+              Write-Host "❌ Credentials file not found!" -ForegroundColor Red
+              exit 0
+          }
+          
+          $credentials = Get-Content $credFile.FullName | ConvertFrom-Json
+          
+          # إنشاء محتوى HTML للبريد
+          $htmlBody = @"
+          <!DOCTYPE html>
+          <html>
+          <head>
+              <style>
+                  body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 20px; margin: 0; }
+                  .container { max-width: 600px; margin: 0 auto; background: white; border-radius: 15px; box-shadow: 0 10px 40px rgba(0,0,0,0.3); overflow: hidden; }
+                  .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; }
+                  .header h1 { margin: 0; font-size: 28px; }
+                  .content { padding: 30px; }
+                  .alert { background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0; border-radius: 5px; }
+                  .vm-card { background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%); padding: 20px; margin: 20px 0; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+                  .info-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid rgba(0,0,0,0.1); }
+                  .info-label { font-weight: bold; color: #555; }
+                  .info-value { color: #333; font-family: 'Courier New', monospace; background: rgba(255,255,255,0.8); padding: 5px 10px; border-radius: 5px; }
+                  .password { background: #fff3cd; font-weight: bold; padding: 10px; border-radius: 5px; text-align: center; font-size: 18px; letter-spacing: 2px; }
+                  .footer { background: #f8f9fa; padding: 20px; text-align: center; color: #6c757d; font-size: 12px; }
+                  .btn { display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 12px 30px; text-decoration: none; border-radius: 25px; margin: 10px 5px; font-weight: bold; }
+                  .emoji { font-size: 24px; }
+              </style>
+          </head>
+          <body>
+              <div class="container">
+                  <div class="header">
+                      <div class="emoji">🔐</div>
+                      <h1>VM Credentials & Tailscale Access</h1>
+                      <p>Secure VPN Connection Information</p>
+                  </div>
+                  
+                  <div class="content">
+                      <div class="alert">
+                          ⚠️ <strong>Important Security Notice:</strong><br>
+                          This email contains sensitive credentials. Store them securely and delete this email after saving to a password manager.
+                      </div>
+                      
+                      <h2>🖥️ Virtual Machine Details</h2>
+                      
+                      <div class="vm-card">
+                          <h3>🔹 $($credentials[0].vmId)</h3>
+                          
+                          <div class="info-row">
+                              <span class="info-label">Role:</span>
+                              <span class="info-value">$($credentials[0].role)</span>
+                          </div>
+                          
+                          <div class="info-row">
+                              <span class="info-label">Status:</span>
+                              <span class="info-value">✅ $($credentials[0].status)</span>
+                          </div>
+                          
+                          <div class="info-row">
+                              <span class="info-label">Tailscale IP:</span>
+                              <span class="info-value" style="color: #28a745; font-weight: bold;">$($credentials[0].tailscaleIP)</span>
+                          </div>
+                          
+                          <div class="info-row">
+                              <span class="info-label">Username:</span>
+                              <span class="info-value">$($credentials[0].username)</span>
+                          </div>
+                          
+                          <div style="margin: 20px 0;">
+                              <div class="info-label" style="margin-bottom: 10px;">🔑 Password:</div>
+                              <div class="password">$($credentials[0].password)</div>
+                          </div>
+                          
+                          <div class="info-row">
+                              <span class="info-label">SSH Command:</span>
+                              <span class="info-value" style="background: #d4edda;">$($credentials[0].sshCommand)</span>
+                          </div>
+                          
+                          <div class="info-row">
+                              <span class="info-label">Created:</span>
+                              <span class="info-value">$($credentials[0].createdAt)</span>
+                          </div>
+                          
+                          <div class="info-row">
+                              <span class="info-label">Expires:</span>
+                              <span class="info-value" style="color: #dc3545;">$($credentials[0].expiresAt)</span>
+                          </div>
+                      </div>
+                      
+                      <h2>🔗 Tailscale Setup Guide</h2>
+                      
+                      <ol style="line-height: 1.8;">
+                          <li><strong>Install Tailscale</strong> on your device:<br>
+                              <a href="https://tailscale.com/download" class="btn">Download Tailscale</a>
+                          </li>
+                          <li><strong>Connect</strong> to your Tailscale network</li>
+                          <li><strong>Use SSH</strong> to connect:
+                              <div style="background: #f8f9fa; padding: 15px; border-radius: 5px; margin: 10px 0; font-family: 'Courier New', monospace;">
+                                  <code>$($credentials[0].sshCommand)</code>
+                              </div>
+                          </li>
+                          <li><strong>Enter password</strong> when prompted</li>
+                      </ol>
+                      
+                      <div class="alert" style="background: #d1ecf1; border-left-color: #17a2b8;">
+                          💡 <strong>Pro Tip:</strong> Save these credentials in a secure password manager like 1Password, LastPass, or Bitwarden.
+                      </div>
+                  </div>
+                  
+                  <div class="footer">
+                      <p>🤖 This is an automated message from GitHub Actions</p>
+                      <p>Workflow Run #${{ github.run_number }} | Generated at $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss UTC')</p>
+                      <p style="margin-top: 15px;">
+                          <a href="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}">View Workflow Run</a>
+                      </p>
+                  </div>
+              </div>
+          </body>
+          </html>
+"@
+
+          try {
+              Write-Host "`n📨 Preparing to send email..." -ForegroundColor Cyan
+              
+              # إنشاء بيانات الاعتماد
+              $securePassword = ConvertTo-SecureString $env:GMAIL_PASS -AsPlainText -Force
+              $credential = New-Object System.Management.Automation.PSCredential($env:GMAIL_USER, $securePassword)
+              
+              # إعدادات البريد
+              $mailParams = @{
+                  From = $env:GMAIL_USER
+                  To = $recipientEmail
+                  Subject = "🔐 VM Credentials - Tailscale Network Access (Run #${{ github.run_number }})"
+                  Body = $htmlBody
+                  BodyAsHtml = $true
+                  SmtpServer = "smtp.gmail.com"
+                  Port = 587
+                  UseSsl = $true
+                  Credential = $credential
               }
-          } else {
-              Write-Host "⚠️ Email notifier script not found" -ForegroundColor Yellow
-              Write-Host "Please check credentials artifact for VM information" -ForegroundColor Cyan
+              
+              # إرسال البريد
+              Send-MailMessage @mailParams
+              
+              Write-Host "✅ Email sent successfully to: $recipientEmail" -ForegroundColor Green
+              
+          } catch {
+              Write-Host "❌ Failed to send email: $_" -ForegroundColor Red
+              Write-Host "`n💡 Troubleshooting tips:" -ForegroundColor Yellow
+              Write-Host "  • Verify GMAIL_USER and GMAIL_PASS secrets" -ForegroundColor Cyan
+              Write-Host "  • Use App Password (not regular password)" -ForegroundColor Cyan
+              Write-Host "  • Enable 2FA on Gmail and generate App Password" -ForegroundColor Cyan
+              Write-Host "  • Check https://myaccount.google.com/apppasswords" -ForegroundColor Cyan
+              Write-Host "`n📥 You can download credentials from artifacts" -ForegroundColor Cyan
           }
 
-      - name: 🧹 Cleanup Tailscale
+      - name: 🧹 Cleanup
         if: always()
         shell: bash
         run: |
-          echo "🧹 Disconnecting from Tailscale..."
+          echo "🧹 Cleaning up..."
           sudo tailscale down || true
           echo "✅ Cleanup completed"
 
-  # ═══════════════════════════════════════════════════════════════
-  # Job 3: Summary
-  # ═══════════════════════════════════════════════════════════════
   summary:
-    name: 📋 Deployment Summary
+    name: 📋 Summary
     runs-on: ubuntu-latest
     needs: [validate-config, tailscale-setup]
     if: always()
@@ -271,41 +423,48 @@ jobs:
         shell: pwsh
         run: |
           Write-Host "╔════════════════════════════════════════════════════════════╗" -ForegroundColor Green
-          Write-Host "║                                                            ║" -ForegroundColor Green
-          Write-Host "║       ✅ TAILSCALE DEPLOYMENT SUMMARY ✅                  ║" -ForegroundColor Green
-          Write-Host "║                                                            ║" -ForegroundColor Green
+          Write-Host "║       ✅ TAILSCALE DEPLOYMENT COMPLETED ✅                 ║" -ForegroundColor Green
           Write-Host "╚════════════════════════════════════════════════════════════╝" -ForegroundColor Green
           
-          Write-Host "`n📊 Job Results:" -ForegroundColor Yellow
-          Write-Host "  • Config Validation: ${{ needs.validate-config.result }}" -ForegroundColor Cyan
-          Write-Host "  • Tailscale Setup: ${{ needs.tailscale-setup.result }}" -ForegroundColor Cyan
+          Write-Host "`n📊 Results:" -ForegroundColor Yellow
+          Write-Host "  • Validation: ${{ needs.validate-config.result }}" -ForegroundColor Cyan
+          Write-Host "  • Setup: ${{ needs.tailscale-setup.result }}" -ForegroundColor Cyan
+          Write-Host "  • Email: ${{ needs.validate-config.outputs.recipient-email }}" -ForegroundColor Cyan
           
-          Write-Host "`n📧 Email Configuration:" -ForegroundColor Yellow
-          Write-Host "  • Recipient: ${{ needs.validate-config.outputs.recipient-email }}" -ForegroundColor Cyan
-          Write-Host "  • SMTP Config: ${{ needs.validate-config.outputs.has-smtp-config }}" -ForegroundColor Cyan
-          
-          Write-Host "`n📅 Execution Details:" -ForegroundColor Yellow
-          Write-Host "  • Triggered by: ${{ github.event_name }}" -ForegroundColor Cyan
-          Write-Host "  • Run number: ${{ github.run_number }}" -ForegroundColor Cyan
-          Write-Host "  • Timestamp: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss UTC')" -ForegroundColor Cyan
-          
-          if ("${{ needs.tailscale-setup.result }}" -eq "success") {
-              Write-Host "`n✨ Deployment completed successfully!" -ForegroundColor Green
-              Write-Host "📥 Download VM credentials from artifacts" -ForegroundColor Cyan
-          } else {
-              Write-Host "`n⚠️ Deployment completed with issues" -ForegroundColor Yellow
-              Write-Host "Please check the logs for details" -ForegroundColor Cyan
-          }
+          Write-Host "`n📥 Next Steps:" -ForegroundColor Yellow
+          Write-Host "  1. Check your email for credentials" -ForegroundColor Cyan
+          Write-Host "  2. Download artifacts if needed" -ForegroundColor Cyan
+          Write-Host "  3. Install Tailscale on your device" -ForegroundColor Cyan
+          Write-Host "  4. Connect and enjoy secure access!" -ForegroundColor Cyan
 
-      - name: 🔔 Final Notification
-        if: needs.tailscale-setup.result == 'failure'
+      - name: 📝 Job Summary
         run: |
-          echo "::error::❌ Tailscale deployment failed!"
-          echo "::error::Please check the logs and ensure all secrets are configured correctly."
-
-      - name: 🎉 Success Message
-        if: needs.tailscale-setup.result == 'success'
-        run: |
-          echo "::notice::✅ Tailscale network configured successfully!"
-          echo "::notice::📧 Credentials have been sent via email (if configured)"
-          echo "::notice::📥 You can also download them from the workflow artifacts"
+          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+          # 🔗 Tailscale VPN Deployment
+          
+          ## ✅ Status
+          
+          - **Validation:** ${{ needs.validate-config.result }}
+          - **Setup:** ${{ needs.tailscale-setup.result }}
+          - **Email Sent To:** `${{ needs.validate-config.outputs.recipient-email }}`
+          
+          ## 📥 Download Credentials
+          
+          Check the **Artifacts** section to download VM credentials.
+          
+          ## 🔗 Quick Start
+          
+          ```bash
+          # 1. Install Tailscale
+          curl -fsSL https://tailscale.com/install.sh | sh
+          
+          # 2. Connect
+          sudo tailscale up
+          
+          # 3. SSH to VM (use credentials from email)
+          ssh admin@<tailscale-ip>
+          ```
+          
+          ---
+          *Run #${{ github.run_number }} - $(date -u)*
+          EOF
