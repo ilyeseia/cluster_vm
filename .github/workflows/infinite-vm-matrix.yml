@@ -2,8 +2,8 @@ name: ♾️ Infinite VM Matrix System
 
 on:
   schedule:
-    - cron: '0 * * * *'      # كل ساعة - إنشاء runner جديد
-    - cron: '*/15 * * * *'   # كل 15 دقيقة - فحص صحة
+    - cron: '0 * * * *'
+    - cron: '*/15 * * * *'
   workflow_dispatch:
     inputs:
       action:
@@ -32,9 +32,6 @@ env:
   RENEWAL_THRESHOLD: 18000
 
 jobs:
-  # ═══════════════════════════════════════════════════════════════
-  # Job 1: Check Resource Quota
-  # ═══════════════════════════════════════════════════════════════
   check-quota:
     name: 💰 Check Resource Quota
     runs-on: ubuntu-latest
@@ -63,9 +60,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
         run: |
-          Write-Host "╔════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-          Write-Host "║         💰 CHECKING RESOURCE QUOTA                        ║" -ForegroundColor Cyan
-          Write-Host "╚════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
+          Write-Host "Checking resource quota..." -ForegroundColor Cyan
           
           try {
               $headers = @{
@@ -77,8 +72,6 @@ jobs:
               $owner = $env:GITHUB_REPOSITORY_OWNER
               $url = "https://api.github.com/users/$owner/settings/billing/actions"
               
-              Write-Host "`nFetching usage data from GitHub API..." -ForegroundColor Yellow
-              
               $usage = Invoke-RestMethod -Uri $url -Headers $headers -Method Get
               
               $used = $usage.total_minutes_used
@@ -86,13 +79,9 @@ jobs:
               $remaining = $total - $used
               $percentage = if ($total -gt 0) { [math]::Round(($used / $total) * 100, 2) } else { 0 }
               
-              Write-Host "`n📊 Usage Statistics:" -ForegroundColor Yellow
-              Write-Host "  • Used: $used minutes" -ForegroundColor Cyan
-              Write-Host "  • Total: $total minutes" -ForegroundColor Cyan
-              Write-Host "  • Remaining: $remaining minutes" -ForegroundColor Green
-              Write-Host "  • Percentage: $percentage%" -ForegroundColor $(if($percentage -gt 90){"Red"}elseif($percentage -gt 75){"Yellow"}else{"Green"})
+              Write-Host "Usage: $used / $total minutes ($percentage%)" -ForegroundColor Cyan
+              Write-Host "Remaining: $remaining minutes" -ForegroundColor Green
               
-              # على الأقل ساعة متبقية للسماح بالعمل
               $hasQuota = $remaining -gt 60
               
               "has-quota=$($hasQuota.ToString().ToLower())" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
@@ -100,25 +89,16 @@ jobs:
               "remaining-minutes=$remaining" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
               
               if (-not $hasQuota) {
-                  Write-Host "`n⚠️ WARNING: Low quota! Only $remaining minutes remaining" -ForegroundColor Red
-                  Write-Host "System will be paused to prevent service interruption" -ForegroundColor Yellow
-              } else {
-                  Write-Host "`n✅ Sufficient quota available" -ForegroundColor Green
+                  Write-Host "WARNING: Low quota! Only $remaining minutes remaining" -ForegroundColor Yellow
               }
               
           } catch {
-              Write-Host "`n⚠️ Could not check quota: $_" -ForegroundColor Yellow
-              Write-Host "Assuming quota is available to allow workflow to continue" -ForegroundColor Yellow
-              
-              # في حالة الخطأ، نفترض وجود رصيد للسماح بالاستمرار
+              Write-Host "Could not check quota: $_" -ForegroundColor Yellow
               "has-quota=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
               "usage-percentage=0" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
               "remaining-minutes=999" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           }
 
-  # ═══════════════════════════════════════════════════════════════
-  # Job 2: System Orchestrator
-  # ═══════════════════════════════════════════════════════════════
   orchestrator:
     name: 🎭 System Orchestrator
     runs-on: ubuntu-latest
@@ -147,49 +127,24 @@ jobs:
         id: analyze
         shell: pwsh
         run: |
-          Write-Host "╔════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-          Write-Host "║       🎭 SYSTEM ORCHESTRATOR - ANALYSIS                   ║" -ForegroundColor Cyan
-          Write-Host "╚════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
+          Write-Host "Analyzing system state..." -ForegroundColor Cyan
           
-          # تحميل التكوين
-          if (Test-Path '.github/production-config.json') {
-              $config = Get-Content '.github/production-config.json' | ConvertFrom-Json
-          } else {
-              # تكوين افتراضي
-              $config = @{
-                  runners = @{
-                      minRunners = 2
-                      maxRunners = 3
-                      renewalThreshold = 18000
-                  }
-              } | ConvertTo-Json | ConvertFrom-Json
-          }
-          
-          Write-Host "`n📊 System Configuration:" -ForegroundColor Yellow
-          Write-Host "  • Mode: production" -ForegroundColor Cyan
-          Write-Host "  • Max Runners: $($config.runners.maxRunners)" -ForegroundColor Cyan
-          Write-Host "  • Renewal Threshold: $($config.runners.renewalThreshold)s" -ForegroundColor Cyan
-          
-          # عدد الـ runners النشطة (محاكاة - يمكن استبدالها بـ API call)
           $activeRunners = 2
+          $minRunners = 2
+          $maxRunners = 3
           
-          Write-Host "`n🔍 Current State:" -ForegroundColor Yellow
-          Write-Host "  • Active Runners: $activeRunners" -ForegroundColor Cyan
-          Write-Host "  • Min Required: $($config.runners.minRunners)" -ForegroundColor Cyan
-          Write-Host "  • Max Allowed: $($config.runners.maxRunners)" -ForegroundColor Cyan
-          Write-Host "  • Remaining Quota: ${{ needs.check-quota.outputs.remaining-minutes }} minutes" -ForegroundColor Green
+          Write-Host "Active Runners: $activeRunners" -ForegroundColor Cyan
+          Write-Host "Remaining Quota: ${{ needs.check-quota.outputs.remaining-minutes }} minutes" -ForegroundColor Green
           
           "active-runners=$activeRunners" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          "min-runners=$($config.runners.minRunners)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          "max-runners=$($config.runners.maxRunners)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "min-runners=$minRunners" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "max-runners=$maxRunners" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
       - name: 🧠 Decision Engine
         id: decide
         shell: pwsh
         run: |
-          Write-Host "╔════════════════════════════════════════════════════════════╗" -ForegroundColor Magenta
-          Write-Host "║       🧠 DECISION ENGINE                                  ║" -ForegroundColor Magenta
-          Write-Host "╚════════════════════════════════════════════════════════════╝" -ForegroundColor Magenta
+          Write-Host "Making decisions..." -ForegroundColor Magenta
           
           $activeRunners = [int]"${{ steps.analyze.outputs.active-runners }}"
           $minRunners = [int]"${{ steps.analyze.outputs.min-runners }}"
@@ -197,50 +152,36 @@ jobs:
           $remainingMinutes = [int]"${{ needs.check-quota.outputs.remaining-minutes }}"
           
           $shouldCreate = $false
-          $shouldRenew = $false
           $actionPlan = "maintain"
           
-          # فحص إذا كان هناك رصيد كافٍ لإنشاء runner (على الأقل ساعة)
           if ($remainingMinutes -lt 60) {
-              Write-Host "⚠️ Insufficient quota for new runners" -ForegroundColor Yellow
+              Write-Host "Insufficient quota for new runners" -ForegroundColor Yellow
               $shouldCreate = $false
               $actionPlan = "pause"
-          } elseif ($activeRunners -lt $minRunners) {
-              $shouldCreate = $true
-              $actionPlan = "scale-up"
-              Write-Host "✅ Decision: CREATE new runners (below minimum)" -ForegroundColor Green
           } elseif ($activeRunners -lt $maxRunners -and $remainingMinutes -gt 120) {
               $shouldCreate = $true
-              $actionPlan = "optimize"
-              Write-Host "✅ Decision: CREATE new runner (optimization)" -ForegroundColor Green
+              $actionPlan = "create"
+              Write-Host "Decision: CREATE new runner" -ForegroundColor Green
           } else {
-              Write-Host "⏸️ Decision: MAINTAIN current state" -ForegroundColor Yellow
+              Write-Host "Decision: MAINTAIN current state" -ForegroundColor Yellow
           }
           
-          $shouldRenew = $true
-          
-          Write-Host "`n📋 Action Plan:" -ForegroundColor Yellow
-          Write-Host "  • Create Runner: $shouldCreate" -ForegroundColor Cyan
-          Write-Host "  • Renew Existing: $shouldRenew" -ForegroundColor Cyan
-          Write-Host "  • Strategy: $actionPlan" -ForegroundColor Cyan
-          Write-Host "  • Quota Check: ✅ $remainingMinutes minutes available" -ForegroundColor Green
+          Write-Host "Create Runner: $shouldCreate" -ForegroundColor Cyan
+          Write-Host "Strategy: $actionPlan" -ForegroundColor Cyan
           
           "create-runner=$($shouldCreate.ToString().ToLower())" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          "renew=$($shouldRenew.ToString().ToLower())" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "renew=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "active-count=$activeRunners" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "plan=$actionPlan" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
-  # ═══════════════════════════════════════════════════════════════
-  # Job 3: VM Matrix Runner (يعمل لمدة 6 ساعات)
-  # ═══════════════════════════════════════════════════════════════
   vm-matrix-runner:
-    name: 🖥️ VM Matrix Runner ${{ matrix.runner-id }}
+    name: 🖥️ VM Runner ${{ matrix.runner-id }}
     runs-on: ubuntu-latest
     needs: [check-quota, orchestrator]
     if: |
       needs.check-quota.outputs.has-quota == 'true' &&
       needs.orchestrator.outputs.should-create-runner == 'true'
-    timeout-minutes: 360  # 6 ساعات
+    timeout-minutes: 360
     strategy:
       matrix:
         runner-id: [1, 2, 3]
@@ -254,44 +195,29 @@ jobs:
       - name: 🔧 Setup Environment
         shell: bash
         run: |
-          echo "╔════════════════════════════════════════════════════════════╗"
-          echo "║     🔧 SETTING UP RUNNER ${{ matrix.runner-id }}          ║"
-          echo "╚════════════════════════════════════════════════════════════╝"
-          echo ""
-          echo "📦 Installing PowerShell..."
+          echo "Setting up Runner ${{ matrix.runner-id }}..."
           wget -q https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/packages-microsoft-prod.deb
           sudo dpkg -i packages-microsoft-prod.deb
           sudo apt-get update
           sudo apt-get install -y powershell
-          
-          echo "📦 Installing Tailscale..."
           curl -fsSL https://tailscale.com/install.sh | sh
-          
-          echo "✅ Environment ready"
+          echo "Environment ready"
 
       - name: 🔗 Connect to Tailscale
         shell: bash
         run: |
-          echo "🔗 Connecting Runner ${{ matrix.runner-id }} to Tailscale mesh..."
-          
+          echo "Connecting to Tailscale..."
           HOSTNAME="vm-runner-${{ github.run_number }}-${{ matrix.runner-id }}"
-          
-          sudo tailscale up \
-            --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} \
-            --hostname=$HOSTNAME \
-            --accept-routes \
-            --advertise-tags=tag:github-runner
-          
+          sudo tailscale up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=$HOSTNAME --accept-routes
           TAILSCALE_IP=$(sudo tailscale ip -4)
-          echo "✅ Connected with IP: $TAILSCALE_IP"
-          
+          echo "Connected with IP: $TAILSCALE_IP"
           echo "TAILSCALE_IP=$TAILSCALE_IP" >> $GITHUB_ENV
           echo "HOSTNAME=$HOSTNAME" >> $GITHUB_ENV
 
-      - name: 📊 Register Runner Metadata
+      - name: 📊 Register Runner
         shell: pwsh
         run: |
-          Write-Host "📊 Registering Runner ${{ matrix.runner-id }}..." -ForegroundColor Cyan
+          Write-Host "Registering Runner ${{ matrix.runner-id }}..." -ForegroundColor Cyan
           
           $metadata = @{
               runnerId = "${{ matrix.runner-id }}"
@@ -299,26 +225,20 @@ jobs:
               hostname = $env:HOSTNAME
               tailscaleIP = $env:TAILSCALE_IP
               startTime = Get-Date -Format 'o'
-              maxRuntime = $env:MAX_RUNTIME
               expiresAt = (Get-Date).AddSeconds([int]$env:MAX_RUNTIME).ToString('o')
               status = "active"
               quotaRemaining = "${{ needs.check-quota.outputs.remaining-minutes }}"
-              workflowUrl = "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           }
           
           New-Item -ItemType Directory -Path "state" -Force | Out-Null
           $metadata | ConvertTo-Json | Set-Content "state/runner-${{ matrix.runner-id }}-metadata.json"
           
-          Write-Host "✅ Runner registered:" -ForegroundColor Green
-          Write-Host "  • ID: $($metadata.runnerId)" -ForegroundColor Cyan
-          Write-Host "  • IP: $($metadata.tailscaleIP)" -ForegroundColor Cyan
-          Write-Host "  • Expires: $($metadata.expiresAt)" -ForegroundColor Yellow
+          Write-Host "Runner registered successfully" -ForegroundColor Green
 
-      - name: 🔐 Generate & Store Credentials
-        id: credentials
+      - name: 🔐 Generate Credentials
         shell: pwsh
         run: |
-          Write-Host "🔐 Generating credentials..." -ForegroundColor Magenta
+          Write-Host "Generating credentials..." -ForegroundColor Magenta
           
           $password = -join ((65..90) + (97..122) + (48..57) + (33..47) | Get-Random -Count 24 | ForEach-Object {[char]$_})
           
@@ -337,9 +257,9 @@ jobs:
           New-Item -ItemType Directory -Path "credentials" -Force | Out-Null
           $credentials | ConvertTo-Json | Set-Content "credentials/runner-${{ matrix.runner-id }}-creds.json"
           
-          Write-Host "✅ Credentials generated" -ForegroundColor Green
+          Write-Host "Credentials generated" -ForegroundColor Green
 
-      - name: 📤 Upload Runner State
+      - name: 📤 Upload State
         uses: actions/upload-artifact@v4
         with:
           name: runner-${{ matrix.runner-id }}-state-${{ github.run_number }}
@@ -348,73 +268,64 @@ jobs:
             credentials/runner-${{ matrix.runner-id }}-*.json
           retention-days: 7
 
-      - name: ⏰ Self-Sustaining Loop (5h 50m)
+      - name: ⏰ Self-Sustaining Loop
         shell: pwsh
         run: |
-          Write-Host "╔════════════════════════════════════════════════════════════╗" -ForegroundColor Green
-          Write-Host "║     ⏰ SELF-SUSTAINING LOOP STARTED                       ║" -ForegroundColor Green
-          Write-Host "╚════════════════════════════════════════════════════════════╝" -ForegroundColor Green
+          Write-Host "Starting self-sustaining loop..." -ForegroundColor Green
           
           $startTime = Get-Date
           $maxRuntime = [int]$env:MAX_RUNTIME
           $renewalThreshold = [int]$env:RENEWAL_THRESHOLD
-          
-          Write-Host "`n📊 Loop Configuration:" -ForegroundColor Yellow
-          Write-Host "  • Max Runtime: $maxRuntime seconds ($($maxRuntime/3600) hours)" -ForegroundColor Cyan
-          Write-Host "  • Renewal at: $renewalThreshold seconds ($($renewalThreshold/3600) hours)" -ForegroundColor Cyan
-          Write-Host "  • Start Time: $($startTime.ToString('yyyy-MM-dd HH:mm:ss'))" -ForegroundColor Cyan
-          Write-Host "  • Runner ID: ${{ matrix.runner-id }}" -ForegroundColor Cyan
-          
-          $checkInterval = 300  # كل 5 دقائق
+          $checkInterval = 300
           $iteration = 0
+          
+          Write-Host "Max Runtime: $($maxRuntime/3600) hours" -ForegroundColor Cyan
+          Write-Host "Renewal at: $($renewalThreshold/3600) hours" -ForegroundColor Cyan
           
           while ($true) {
               $elapsed = ((Get-Date) - $startTime).TotalSeconds
               $remaining = $maxRuntime - $elapsed
               $iteration++
               
-              Write-Host "`n[$iteration] ⏱️ Runtime: $([math]::Round($elapsed/60, 1))m / $($maxRuntime/60)m (Remaining: $([math]::Round($remaining/60, 1))m)" -ForegroundColor Cyan
+              Write-Host "[$iteration] Runtime: $([math]::Round($elapsed/60, 1))m (Remaining: $([math]::Round($remaining/60, 1))m)" -ForegroundColor Cyan
               
-              # فحص إذا حان وقت التجديد
               if ($elapsed -ge $renewalThreshold) {
-                  Write-Host "🔄 RENEWAL THRESHOLD REACHED!" -ForegroundColor Yellow
-                  Write-Host "  • This runner will expire soon" -ForegroundColor Yellow
-                  Write-Host "  • New workflow should start automatically" -ForegroundColor Cyan
+                  Write-Host "RENEWAL THRESHOLD REACHED" -ForegroundColor Yellow
                   break
               }
               
-              # فحص الصحة
               try {
-                  $tailscaleStatus = sudo tailscale status --json | ConvertFrom-Json
-                  Write-Host "  • Tailscale: Connected ✅" -ForegroundColor Green
-                  Write-Host "  • IP: $env:TAILSCALE_IP" -ForegroundColor Cyan
-                  Write-Host "  • Status: Active & Ready 🟢" -ForegroundColor Green
+                  sudo tailscale status | Out-Null
+                  Write-Host "Tailscale: Connected" -ForegroundColor Green
               } catch {
-                  Write-Host "  • Tailscale: Reconnecting..." -ForegroundColor Yellow
+                  Write-Host "Tailscale: Reconnecting..." -ForegroundColor Yellow
                   sudo tailscale up
               }
               
-              # انتظار قبل الفحص التالي
               if ($remaining -gt $checkInterval) {
                   Start-Sleep -Seconds $checkInterval
               } else {
-                  Write-Host "  • Approaching timeout, exiting loop..." -ForegroundColor Yellow
+                  Write-Host "Approaching timeout, exiting..." -ForegroundColor Yellow
                   break
               }
           }
           
-          Write-Host "`n✅ Loop completed - Graceful shutdown initiated" -ForegroundColor Green
+          Write-Host "Loop completed" -ForegroundColor Green
 
-      - name: 📧 Send Credentials Email
+      - name: 📧 Send Email
         if: matrix.runner-id == '1'
         shell: pwsh
         env:
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
           GMAIL_PASS: ${{ secrets.GMAIL_PASS }}
+          RUN_NUMBER: ${{ github.run_number }}
+          RUN_ID: ${{ github.run_id }}
+          REPO: ${{ github.repository }}
+          QUOTA_USAGE: ${{ needs.check-quota.outputs.usage-percentage }}
+          QUOTA_REMAINING: ${{ needs.check-quota.outputs.remaining-minutes }}
         run: |
-          Write-Host "📧 Preparing consolidated email..." -ForegroundColor Cyan
+          Write-Host "Preparing email..." -ForegroundColor Cyan
           
-          # جمع بيانات جميع Runners
           $allCreds = @()
           if (Test-Path "credentials") {
               $allCreds = Get-ChildItem "credentials/*.json" -ErrorAction SilentlyContinue | ForEach-Object {
@@ -423,82 +334,47 @@ jobs:
           }
           
           if ($allCreds.Count -eq 0) {
-              Write-Host "⚠️ No credentials found to send" -ForegroundColor Yellow
+              Write-Host "No credentials to send" -ForegroundColor Yellow
               exit 0
           }
           
-          $runNumber = "${{ github.run_number }}"
-          $runId = "${{ github.run_id }}"
-          $repo = "${{ github.repository }}"
-          $quotaUsage = "${{ needs.check-quota.outputs.usage-percentage }}%"
-          $quotaRemaining = "${{ needs.check-quota.outputs.remaining-minutes }} minutes"
+          $runNumber = $env:RUN_NUMBER
+          $runId = $env:RUN_ID
+          $repo = $env:REPO
+          $quotaUsage = $env:QUOTA_USAGE
+          $quotaRemaining = $env:QUOTA_REMAINING
           $currentTime = Get-Date -Format 'yyyy-MM-dd HH:mm:ss UTC'
           
-          $htmlBody = @"
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <style>
-        body { font-family: Arial, sans-serif; background: #f5f5f5; padding: 20px; margin: 0; }
-        .container { max-width: 800px; margin: 0 auto; background: white; border-radius: 10px; padding: 30px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
-        h1 { color: #2c3e50; border-bottom: 3px solid #3498db; padding-bottom: 10px; }
-        .quota-alert { background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0; border-radius: 5px; }
-        .runner-card { background: #ecf0f1; padding: 20px; margin: 15px 0; border-radius: 8px; border-left: 5px solid #3498db; }
-        .cred-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #ddd; }
-        .label { font-weight: bold; color: #555; }
-        .value { font-family: monospace; background: #fff; padding: 5px 10px; border-radius: 3px; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>♾️ Infinite VM Matrix - Active Runners</h1>
-        <p><strong>Run #$runNumber</strong> | $currentTime</p>
-        
-        <div class="quota-alert">
-            <strong>📊 Resource Usage:</strong><br>
-            • Quota Used: $quotaUsage<br>
-            • Remaining: $quotaRemaining
-        </div>
-"@
-
+          # بناء HTML بدون استخدام here-string لتجنب مشاكل YAML
+          $htmlBody = "<!DOCTYPE html><html><head><meta charset='UTF-8'><style>"
+          $htmlBody += "body{font-family:Arial,sans-serif;background:#f5f5f5;padding:20px;margin:0;}"
+          $htmlBody += ".container{max-width:800px;margin:0 auto;background:white;border-radius:10px;padding:30px;box-shadow:0 4px 6px rgba(0,0,0,0.1);}"
+          $htmlBody += "h1{color:#2c3e50;border-bottom:3px solid #3498db;padding-bottom:10px;}"
+          $htmlBody += ".quota-alert{background:#fff3cd;border-left:4px solid #ffc107;padding:15px;margin:20px 0;border-radius:5px;}"
+          $htmlBody += ".runner-card{background:#ecf0f1;padding:20px;margin:15px 0;border-radius:8px;border-left:5px solid #3498db;}"
+          $htmlBody += ".cred-row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #ddd;}"
+          $htmlBody += ".label{font-weight:bold;color:#555;}"
+          $htmlBody += ".value{font-family:monospace;background:#fff;padding:5px 10px;border-radius:3px;}"
+          $htmlBody += "</style></head><body><div class='container'>"
+          $htmlBody += "<h1>Infinite VM Matrix - Active Runners</h1>"
+          $htmlBody += "<p><strong>Run #$runNumber</strong> | $currentTime</p>"
+          $htmlBody += "<div class='quota-alert'><strong>Resource Usage:</strong><br>"
+          $htmlBody += "Quota Used: $quotaUsage%<br>Remaining: $quotaRemaining minutes</div>"
+          
           foreach ($cred in $allCreds) {
-              $htmlBody += @"
-        <div class="runner-card">
-            <h3>🖥️ Runner $($cred.runnerId)</h3>
-            <div class="cred-row">
-                <span class="label">Tailscale IP:</span>
-                <span class="value" style="color: #27ae60; font-weight: bold;">$($cred.tailscaleIP)</span>
-            </div>
-            <div class="cred-row">
-                <span class="label">Username:</span>
-                <span class="value">$($cred.username)</span>
-            </div>
-            <div class="cred-row">
-                <span class="label">Password:</span>
-                <span class="value" style="background: #fff3cd;">$($cred.password)</span>
-            </div>
-            <div class="cred-row">
-                <span class="label">SSH:</span>
-                <span class="value">$($cred.sshCommand)</span>
-            </div>
-            <div class="cred-row">
-                <span class="label">Expires:</span>
-                <span class="value" style="color: #e74c3c;">$($cred.expiresAt)</span>
-            </div>
-        </div>
-"@
+              $htmlBody += "<div class='runner-card'><h3>VM Runner $($cred.runnerId)</h3>"
+              $htmlBody += "<div class='cred-row'><span class='label'>Tailscale IP:</span><span class='value' style='color:#27ae60;font-weight:bold;'>$($cred.tailscaleIP)</span></div>"
+              $htmlBody += "<div class='cred-row'><span class='label'>Username:</span><span class='value'>$($cred.username)</span></div>"
+              $htmlBody += "<div class='cred-row'><span class='label'>Password:</span><span class='value' style='background:#fff3cd;'>$($cred.password)</span></div>"
+              $htmlBody += "<div class='cred-row'><span class='label'>SSH:</span><span class='value'>$($cred.sshCommand)</span></div>"
+              $htmlBody += "<div class='cred-row'><span class='label'>Expires:</span><span class='value' style='color:#e74c3c;'>$($cred.expiresAt)</span></div>"
+              $htmlBody += "</div>"
           }
-
-          $htmlBody += @"
-        <p style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #ddd; color: #7f8c8d; font-size: 12px;">
-            🤖 Automated by GitHub Actions | <a href="https://github.com/$repo/actions/runs/$runId">View Run</a>
-        </p>
-    </div>
-</body>
-</html>
-"@
-
+          
+          $htmlBody += "<p style='margin-top:30px;padding-top:20px;border-top:1px solid #ddd;color:#7f8c8d;font-size:12px;'>"
+          $htmlBody += "Automated by GitHub Actions | <a href='https://github.com/$repo/actions/runs/$runId'>View Run</a></p>"
+          $htmlBody += "</div></body></html>"
+          
           try {
               $securePass = ConvertTo-SecureString $env:GMAIL_PASS -AsPlainText -Force
               $credential = New-Object System.Management.Automation.PSCredential($env:GMAIL_USER, $securePass)
@@ -506,7 +382,7 @@ jobs:
               Send-MailMessage `
                   -From $env:GMAIL_USER `
                   -To $env:GMAIL_USER `
-                  -Subject "♾️ VM Matrix Run #$runNumber - $($allCreds.Count) Runners Active ($quotaUsage used)" `
+                  -Subject "VM Matrix Run #$runNumber - $($allCreds.Count) Runners ($quotaUsage% used)" `
                   -Body $htmlBody `
                   -BodyAsHtml `
                   -SmtpServer "smtp.gmail.com" `
@@ -514,22 +390,19 @@ jobs:
                   -UseSsl `
                   -Credential $credential
               
-              Write-Host "✅ Email sent successfully" -ForegroundColor Green
+              Write-Host "Email sent successfully" -ForegroundColor Green
           } catch {
-              Write-Host "⚠️ Email failed: $_" -ForegroundColor Yellow
+              Write-Host "Email failed: $_" -ForegroundColor Yellow
           }
 
       - name: 🧹 Cleanup
         if: always()
         shell: bash
         run: |
-          echo "🧹 Cleaning up Runner ${{ matrix.runner-id }}..."
+          echo "Cleaning up..."
           sudo tailscale down || true
-          echo "✅ Cleanup completed"
+          echo "Cleanup completed"
 
-  # ═══════════════════════════════════════════════════════════════
-  # Job 4: Health Monitor & Summary
-  # ═══════════════════════════════════════════════════════════════
   health-monitor:
     name: 🏥 Health Monitor
     runs-on: ubuntu-latest
@@ -537,41 +410,32 @@ jobs:
     if: always()
     
     steps:
-      - name: 📊 Generate System Summary
+      - name: 📊 Generate Summary
         shell: pwsh
         run: |
-          Write-Host "╔════════════════════════════════════════════════════════════╗" -ForegroundColor Green
-          Write-Host "║     🏥 SYSTEM HEALTH MONITOR & SUMMARY                    ║" -ForegroundColor Green
-          Write-Host "╚════════════════════════════════════════════════════════════╝" -ForegroundColor Green
-          
-          Write-Host "`n📊 Run Summary:" -ForegroundColor Yellow
-          Write-Host "  • Run Number: ${{ github.run_number }}" -ForegroundColor Cyan
-          Write-Host "  • Triggered by: ${{ github.event_name }}" -ForegroundColor Cyan
-          Write-Host "  • Quota Check: ${{ needs.check-quota.result }}" -ForegroundColor Cyan
-          Write-Host "  • Orchestrator: ${{ needs.orchestrator.result }}" -ForegroundColor Cyan
-          Write-Host "  • VM Runners: ${{ needs.vm-matrix-runner.result }}" -ForegroundColor Cyan
-          
-          Write-Host "`n💰 Resource Status:" -ForegroundColor Yellow
-          Write-Host "  • Has Quota: ${{ needs.check-quota.outputs.has-quota }}" -ForegroundColor Cyan
-          Write-Host "  • Usage: ${{ needs.check-quota.outputs.usage-percentage }}%" -ForegroundColor Cyan
-          Write-Host "  • Remaining: ${{ needs.check-quota.outputs.remaining-minutes }} minutes" -ForegroundColor Green
+          Write-Host "Generating summary..." -ForegroundColor Green
+          Write-Host "Run Number: ${{ github.run_number }}" -ForegroundColor Cyan
+          Write-Host "Quota Check: ${{ needs.check-quota.result }}" -ForegroundColor Cyan
+          Write-Host "Orchestrator: ${{ needs.orchestrator.result }}" -ForegroundColor Cyan
+          Write-Host "VM Runners: ${{ needs.vm-matrix-runner.result }}" -ForegroundColor Cyan
+          Write-Host "Has Quota: ${{ needs.check-quota.outputs.has-quota }}" -ForegroundColor Cyan
+          Write-Host "Usage: ${{ needs.check-quota.outputs.usage-percentage }}%" -ForegroundColor Cyan
+          Write-Host "Remaining: ${{ needs.check-quota.outputs.remaining-minutes }} minutes" -ForegroundColor Green
           
           $hasQuota = "${{ needs.check-quota.outputs.has-quota }}"
           if ($hasQuota -eq "true") {
-              Write-Host "`n✅ System Status: OPERATIONAL" -ForegroundColor Green
-              Write-Host "♾️ Infinite Loop Active" -ForegroundColor Cyan
+              Write-Host "System Status: OPERATIONAL" -ForegroundColor Green
           } else {
-              Write-Host "`n⚠️ System Status: PAUSED (Low Quota)" -ForegroundColor Yellow
-              Write-Host "💤 Waiting for quota renewal" -ForegroundColor Yellow
+              Write-Host "System Status: PAUSED (Low Quota)" -ForegroundColor Yellow
           }
 
-      - name: 📝 Create Summary Report
+      - name: 📝 Create Report
         if: always()
         run: |
           cat >> $GITHUB_STEP_SUMMARY << 'EOF'
-          # ♾️ Infinite VM Matrix System - Summary
+          # Infinite VM Matrix - Summary
           
-          ## 📊 Status Overview
+          ## Status
           
           | Component | Status |
           |-----------|--------|
@@ -579,19 +443,14 @@ jobs:
           | Orchestrator | ${{ needs.orchestrator.result }} |
           | VM Runners | ${{ needs.vm-matrix-runner.result }} |
           
-          ## 💰 Resource Usage
+          ## Resource Usage
           
-          - **Has Quota:** ${{ needs.check-quota.outputs.has-quota }}
-          - **Usage:** ${{ needs.check-quota.outputs.usage-percentage }}%
-          - **Remaining:** ${{ needs.check-quota.outputs.remaining-minutes }} minutes
+          - Has Quota: ${{ needs.check-quota.outputs.has-quota }}
+          - Usage: ${{ needs.check-quota.outputs.usage-percentage }}%
+          - Remaining: ${{ needs.check-quota.outputs.remaining-minutes }} minutes
           
-          ## 🔗 Quick Links
+          ## Links
           
-          - [View Billing](https://github.com/settings/billing)
-          - [Actions History](https://github.com/${{ github.repository }}/actions)
+          - [Billing Dashboard](https://github.com/settings/billing)
           - [This Run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
-          
-          ---
-          
-          *Generated at: $(date -u)*
           EOF
