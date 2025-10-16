@@ -44,66 +44,58 @@ jobs:
         id: check
         shell: pwsh
         run: |
-          Write-Host "╔════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-          Write-Host "║         ✅ CONFIGURATION VALIDATION                       ║" -ForegroundColor Cyan
-          Write-Host "╚════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
+          Write-Host "Checking configuration..." -ForegroundColor Cyan
           
           $hasErrors = $false
           
           if ("${{ secrets.TAILSCALE_AUTH_KEY }}" -eq "") {
-              Write-Host "❌ TAILSCALE_AUTH_KEY is not set!" -ForegroundColor Red
+              Write-Host "TAILSCALE_AUTH_KEY is not set!" -ForegroundColor Red
               $hasErrors = $true
               "has-tailscale=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           } else {
-              Write-Host "✅ TAILSCALE_AUTH_KEY is configured" -ForegroundColor Green
+              Write-Host "TAILSCALE_AUTH_KEY is configured" -ForegroundColor Green
               "has-tailscale=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           }
           
           $gmailComplete = $true
           if ("${{ secrets.GMAIL_USER }}" -eq "") {
-              Write-Host "❌ GMAIL_USER is not set!" -ForegroundColor Red
+              Write-Host "GMAIL_USER is not set!" -ForegroundColor Red
               $gmailComplete = $false
           } else {
-              Write-Host "✅ GMAIL_USER is configured" -ForegroundColor Green
+              Write-Host "GMAIL_USER is configured" -ForegroundColor Green
           }
           
           if ("${{ secrets.GMAIL_PASS }}" -eq "") {
-              Write-Host "❌ GMAIL_PASS is not set!" -ForegroundColor Red
+              Write-Host "GMAIL_PASS is not set!" -ForegroundColor Red
               $gmailComplete = $false
           } else {
-              Write-Host "✅ GMAIL_PASS is configured" -ForegroundColor Green
+              Write-Host "GMAIL_PASS is configured" -ForegroundColor Green
           }
           
           if ($gmailComplete) {
               "has-gmail=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           } else {
               "has-gmail=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-              Write-Host "⚠️ Gmail configuration incomplete" -ForegroundColor Yellow
+              Write-Host "Gmail configuration incomplete" -ForegroundColor Yellow
           }
           
           $recipientEmail = ""
           if ("${{ github.event.inputs.recipient-email }}" -ne "") {
               $recipientEmail = "${{ github.event.inputs.recipient-email }}"
-              Write-Host "✅ Recipient from input: $recipientEmail" -ForegroundColor Green
           } elseif ("${{ secrets.GMAIL_USER }}" -ne "") {
               $recipientEmail = "${{ secrets.GMAIL_USER }}"
-              Write-Host "✅ Recipient from GMAIL_USER: $recipientEmail" -ForegroundColor Green
           }
           
           "recipient=$recipientEmail" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           
-          Write-Host "`n📋 Configuration Summary:" -ForegroundColor Yellow
-          Write-Host "  • Tailscale: $(if('${{ secrets.TAILSCALE_AUTH_KEY }}' -ne ''){'✅'}else{'❌'})" -ForegroundColor Cyan
-          Write-Host "  • Gmail User: $(if('${{ secrets.GMAIL_USER }}' -ne ''){'✅'}else{'❌'})" -ForegroundColor Cyan
-          Write-Host "  • Gmail Pass: $(if('${{ secrets.GMAIL_PASS }}' -ne ''){'✅'}else{'❌'})" -ForegroundColor Cyan
-          Write-Host "  • Recipient: $recipientEmail" -ForegroundColor Cyan
+          Write-Host "Recipient: $recipientEmail" -ForegroundColor Cyan
           
           if ($hasErrors) {
-              Write-Host "`n❌ Configuration validation failed!" -ForegroundColor Red
+              Write-Host "Configuration validation failed!" -ForegroundColor Red
               exit 1
           }
           
-          Write-Host "`n✅ Configuration validation passed!" -ForegroundColor Green
+          Write-Host "Configuration validation passed!" -ForegroundColor Green
 
   tailscale-setup:
     name: 🔗 Setup Tailscale Network
@@ -127,42 +119,40 @@ jobs:
       - name: 🔗 Install Tailscale
         shell: bash
         run: |
-          echo "📦 Installing Tailscale..."
+          echo "Installing Tailscale..."
           curl -fsSL https://tailscale.com/install.sh | sh
-          echo "✅ Tailscale installed"
+          echo "Tailscale installed"
           
       - name: 🌐 Connect to Tailscale Network
         shell: bash
         run: |
-          echo "🔗 Connecting to Tailscale..."
+          echo "Connecting to Tailscale..."
           sudo tailscale up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=github-runner-${{ github.run_number }} --accept-routes
-          echo "✅ Connected successfully"
+          echo "Connected successfully"
           
       - name: 📊 Get Tailscale Status
         shell: bash
         run: |
-          echo "╔════════════════════════════════════════════════════════════╗"
-          echo "║           🔗 TAILSCALE NETWORK STATUS                     ║"
-          echo "╚════════════════════════════════════════════════════════════╝"
+          echo "=========================================="
+          echo "    TAILSCALE NETWORK STATUS"
+          echo "=========================================="
           echo ""
-          echo "📍 My Tailscale IP:"
+          echo "My Tailscale IP:"
           sudo tailscale ip -4
           echo ""
-          echo "🌐 Connected Devices:"
+          echo "Connected Devices:"
           sudo tailscale status
           
       - name: 🔐 Generate VM Credentials
         id: generate-creds
         shell: pwsh
         run: |
-          Write-Host "╔════════════════════════════════════════════════════════════╗" -ForegroundColor Magenta
-          Write-Host "║       🔐 GENERATING VM CREDENTIALS                        ║" -ForegroundColor Magenta
-          Write-Host "╚════════════════════════════════════════════════════════════╝" -ForegroundColor Magenta
+          Write-Host "Generating VM credentials..." -ForegroundColor Magenta
           
           New-Item -ItemType Directory -Path "results" -Force | Out-Null
           
           $tailscaleIP = (sudo tailscale ip -4).Trim()
-          Write-Host "`n📍 Tailscale IP: $tailscaleIP" -ForegroundColor Cyan
+          Write-Host "Tailscale IP: $tailscaleIP" -ForegroundColor Cyan
           
           $password = -join ((65..90) + (97..122) + (48..57) + (33..47) | Get-Random -Count 20 | ForEach-Object {[char]$_})
           
@@ -187,15 +177,15 @@ jobs:
           $credFile = "results/vm-credentials-$(Get-Date -Format 'yyyyMMdd-HHmmss').json"
           $credentials | ConvertTo-Json -Depth 10 | Set-Content $credFile
           
-          Write-Host "`n✅ Credentials generated successfully" -ForegroundColor Green
-          Write-Host "📄 Saved to: $credFile" -ForegroundColor Cyan
+          Write-Host "Credentials generated successfully" -ForegroundColor Green
+          Write-Host "Saved to: $credFile" -ForegroundColor Cyan
           
-          Write-Host "`n📋 Generated Credentials:" -ForegroundColor Yellow
-          Write-Host "  • VM ID: $($credentials[0].vmId)" -ForegroundColor Cyan
-          Write-Host "  • Tailscale IP: $($credentials[0].tailscaleIP)" -ForegroundColor Green
-          Write-Host "  • Username: $($credentials[0].username)" -ForegroundColor Cyan
-          Write-Host "  • Password: $($credentials[0].password)" -ForegroundColor Yellow
-          Write-Host "  • SSH: $($credentials[0].sshCommand)" -ForegroundColor Cyan
+          Write-Host "Generated Credentials:" -ForegroundColor Yellow
+          Write-Host "  VM ID: $($credentials[0].vmId)" -ForegroundColor Cyan
+          Write-Host "  Tailscale IP: $($credentials[0].tailscaleIP)" -ForegroundColor Green
+          Write-Host "  Username: $($credentials[0].username)" -ForegroundColor Cyan
+          Write-Host "  Password: $($credentials[0].password)" -ForegroundColor Yellow
+          Write-Host "  SSH: $($credentials[0].sshCommand)" -ForegroundColor Cyan
           
           "cred-file=$credFile" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
@@ -219,152 +209,100 @@ jobs:
           RUN_ID: ${{ github.run_id }}
           REPO: ${{ github.repository }}
         run: |
-          Write-Host "╔════════════════════════════════════════════════════════════╗" -ForegroundColor Green
-          Write-Host "║       📧 SENDING EMAIL NOTIFICATION                       ║" -ForegroundColor Green
-          Write-Host "╚════════════════════════════════════════════════════════════╝" -ForegroundColor Green
+          Write-Host "Preparing email notification..." -ForegroundColor Green
           
           $recipientEmail = $env:RECIPIENT_EMAIL
           
-          Write-Host "`n📧 Email Configuration:" -ForegroundColor Yellow
-          Write-Host "  • From: $env:GMAIL_USER" -ForegroundColor Cyan
-          Write-Host "  • To: $recipientEmail" -ForegroundColor Cyan
-          Write-Host "  • SMTP: smtp.gmail.com:587" -ForegroundColor Cyan
+          Write-Host "Email Configuration:" -ForegroundColor Yellow
+          Write-Host "  From: $env:GMAIL_USER" -ForegroundColor Cyan
+          Write-Host "  To: $recipientEmail" -ForegroundColor Cyan
+          Write-Host "  SMTP: smtp.gmail.com:587" -ForegroundColor Cyan
           
           if ([string]::IsNullOrWhiteSpace($recipientEmail)) {
-              Write-Host "`n❌ No recipient email!" -ForegroundColor Red
+              Write-Host "No recipient email!" -ForegroundColor Red
               exit 0
           }
           
           $credFile = Get-ChildItem "results/vm-credentials-*.json" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
           
           if (-not $credFile) {
-              Write-Host "❌ Credentials file not found!" -ForegroundColor Red
+              Write-Host "Credentials file not found!" -ForegroundColor Red
               exit 0
           }
           
           $credentials = Get-Content $credFile.FullName | ConvertFrom-Json
           $cred = $credentials[0]
           
-          # إنشاء HTML (بدون استخدام interpolation مع GitHub expressions)
           $runNumber = $env:RUN_NUMBER
           $runId = $env:RUN_ID
           $repo = $env:REPO
           $currentTime = Get-Date -Format 'yyyy-MM-dd HH:mm:ss UTC'
           
-          $htmlBody = @"
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 20px; margin: 0; }
-        .container { max-width: 600px; margin: 0 auto; background: white; border-radius: 15px; box-shadow: 0 10px 40px rgba(0,0,0,0.3); overflow: hidden; }
-        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; }
-        .header h1 { margin: 0; font-size: 28px; }
-        .content { padding: 30px; }
-        .alert { background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0; border-radius: 5px; }
-        .vm-card { background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%); padding: 20px; margin: 20px 0; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
-        .info-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid rgba(0,0,0,0.1); }
-        .info-label { font-weight: bold; color: #555; }
-        .info-value { color: #333; font-family: 'Courier New', monospace; background: rgba(255,255,255,0.8); padding: 5px 10px; border-radius: 5px; word-break: break-all; }
-        .password { background: #fff3cd; font-weight: bold; padding: 15px; border-radius: 5px; text-align: center; font-size: 16px; letter-spacing: 1px; word-break: break-all; }
-        .footer { background: #f8f9fa; padding: 20px; text-align: center; color: #6c757d; font-size: 12px; }
-        .btn { display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 12px 30px; text-decoration: none; border-radius: 25px; margin: 10px 5px; font-weight: bold; }
-        .emoji { font-size: 24px; }
-        ol { line-height: 1.8; }
-        code { background: #f8f9fa; padding: 15px; border-radius: 5px; display: block; margin: 10px 0; font-family: 'Courier New', monospace; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <div class="emoji">🔐</div>
-            <h1>VM Credentials & Tailscale Access</h1>
-            <p>Secure VPN Connection Information</p>
-        </div>
-        
-        <div class="content">
-            <div class="alert">
-                ⚠️ <strong>Important Security Notice:</strong><br>
-                This email contains sensitive credentials. Store them securely and delete this email after saving to a password manager.
-            </div>
-            
-            <h2>🖥️ Virtual Machine Details</h2>
-            
-            <div class="vm-card">
-                <h3>🔹 $($cred.vmId)</h3>
-                
-                <div class="info-row">
-                    <span class="info-label">Role:</span>
-                    <span class="info-value">$($cred.role)</span>
-                </div>
-                
-                <div class="info-row">
-                    <span class="info-label">Status:</span>
-                    <span class="info-value">✅ $($cred.status)</span>
-                </div>
-                
-                <div class="info-row">
-                    <span class="info-label">Tailscale IP:</span>
-                    <span class="info-value" style="color: #28a745; font-weight: bold;">$($cred.tailscaleIP)</span>
-                </div>
-                
-                <div class="info-row">
-                    <span class="info-label">Username:</span>
-                    <span class="info-value">$($cred.username)</span>
-                </div>
-                
-                <div style="margin: 20px 0;">
-                    <div class="info-label" style="margin-bottom: 10px;">🔑 Password:</div>
-                    <div class="password">$($cred.password)</div>
-                </div>
-                
-                <div class="info-row">
-                    <span class="info-label">SSH Command:</span>
-                    <span class="info-value" style="background: #d4edda;">$($cred.sshCommand)</span>
-                </div>
-                
-                <div class="info-row">
-                    <span class="info-label">Created:</span>
-                    <span class="info-value">$($cred.createdAt)</span>
-                </div>
-                
-                <div class="info-row">
-                    <span class="info-label">Expires:</span>
-                    <span class="info-value" style="color: #dc3545;">$($cred.expiresAt)</span>
-                </div>
-            </div>
-            
-            <h2>🔗 Tailscale Setup Guide</h2>
-            
-            <ol>
-                <li><strong>Install Tailscale</strong> on your device:<br>
-                    <a href="https://tailscale.com/download" class="btn">Download Tailscale</a>
-                </li>
-                <li><strong>Connect</strong> to your Tailscale network</li>
-                <li><strong>Use SSH</strong> to connect:<code>$($cred.sshCommand)</code></li>
-                <li><strong>Enter password</strong> when prompted</li>
-            </ol>
-            
-            <div class="alert" style="background: #d1ecf1; border-left-color: #17a2b8;">
-                💡 <strong>Pro Tip:</strong> Save these credentials in a secure password manager like 1Password, LastPass, or Bitwarden.
-            </div>
-        </div>
-        
-        <div class="footer">
-            <p>🤖 This is an automated message from GitHub Actions</p>
-            <p>Workflow Run #$runNumber | Generated at $currentTime</p>
-            <p style="margin-top: 15px;">
-                <a href="https://github.com/$repo/actions/runs/$runId">View Workflow Run</a>
-            </p>
-        </div>
-    </div>
-</body>
-</html>
-"@
-
+          # بناء HTML بطريقة آمنة
+          $htmlBody = "<!DOCTYPE html><html><head><meta charset='UTF-8'><style>"
+          $htmlBody += "body{font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);padding:20px;margin:0;}"
+          $htmlBody += ".container{max-width:600px;margin:0 auto;background:white;border-radius:15px;box-shadow:0 10px 40px rgba(0,0,0,0.3);overflow:hidden;}"
+          $htmlBody += ".header{background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);color:white;padding:30px;text-align:center;}"
+          $htmlBody += ".header h1{margin:0;font-size:28px;}"
+          $htmlBody += ".content{padding:30px;}"
+          $htmlBody += ".alert{background:#fff3cd;border-left:4px solid #ffc107;padding:15px;margin:20px 0;border-radius:5px;}"
+          $htmlBody += ".vm-card{background:linear-gradient(135deg,#f5f7fa 0%,#c3cfe2 100%);padding:20px;margin:20px 0;border-radius:10px;box-shadow:0 4px 6px rgba(0,0,0,0.1);}"
+          $htmlBody += ".info-row{display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid rgba(0,0,0,0.1);}"
+          $htmlBody += ".info-label{font-weight:bold;color:#555;}"
+          $htmlBody += ".info-value{color:#333;font-family:'Courier New',monospace;background:rgba(255,255,255,0.8);padding:5px 10px;border-radius:5px;word-break:break-all;}"
+          $htmlBody += ".password{background:#fff3cd;font-weight:bold;padding:15px;border-radius:5px;text-align:center;font-size:16px;letter-spacing:1px;word-break:break-all;}"
+          $htmlBody += ".footer{background:#f8f9fa;padding:20px;text-align:center;color:#6c757d;font-size:12px;}"
+          $htmlBody += ".btn{display:inline-block;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);color:white;padding:12px 30px;text-decoration:none;border-radius:25px;margin:10px 5px;font-weight:bold;}"
+          $htmlBody += "ol{line-height:1.8;}"
+          $htmlBody += "code{background:#f8f9fa;padding:15px;border-radius:5px;display:block;margin:10px 0;font-family:'Courier New',monospace;}"
+          $htmlBody += "</style></head><body><div class='container'>"
+          
+          # Header
+          $htmlBody += "<div class='header'><div style='font-size:24px;'>🔐</div>"
+          $htmlBody += "<h1>VM Credentials & Tailscale Access</h1>"
+          $htmlBody += "<p>Secure VPN Connection Information</p></div>"
+          
+          # Content
+          $htmlBody += "<div class='content'>"
+          $htmlBody += "<div class='alert'>⚠️ <strong>Important Security Notice:</strong><br>"
+          $htmlBody += "This email contains sensitive credentials. Store them securely and delete this email after saving to a password manager.</div>"
+          
+          $htmlBody += "<h2>🖥️ Virtual Machine Details</h2>"
+          $htmlBody += "<div class='vm-card'><h3>🔹 $($cred.vmId)</h3>"
+          
+          $htmlBody += "<div class='info-row'><span class='info-label'>Role:</span><span class='info-value'>$($cred.role)</span></div>"
+          $htmlBody += "<div class='info-row'><span class='info-label'>Status:</span><span class='info-value'>✅ $($cred.status)</span></div>"
+          $htmlBody += "<div class='info-row'><span class='info-label'>Tailscale IP:</span><span class='info-value' style='color:#28a745;font-weight:bold;'>$($cred.tailscaleIP)</span></div>"
+          $htmlBody += "<div class='info-row'><span class='info-label'>Username:</span><span class='info-value'>$($cred.username)</span></div>"
+          
+          $htmlBody += "<div style='margin:20px 0;'><div class='info-label' style='margin-bottom:10px;'>🔑 Password:</div>"
+          $htmlBody += "<div class='password'>$($cred.password)</div></div>"
+          
+          $htmlBody += "<div class='info-row'><span class='info-label'>SSH Command:</span><span class='info-value' style='background:#d4edda;'>$($cred.sshCommand)</span></div>"
+          $htmlBody += "<div class='info-row'><span class='info-label'>Created:</span><span class='info-value'>$($cred.createdAt)</span></div>"
+          $htmlBody += "<div class='info-row'><span class='info-label'>Expires:</span><span class='info-value' style='color:#dc3545;'>$($cred.expiresAt)</span></div>"
+          $htmlBody += "</div>"
+          
+          # Setup Guide
+          $htmlBody += "<h2>🔗 Tailscale Setup Guide</h2><ol>"
+          $htmlBody += "<li><strong>Install Tailscale</strong> on your device:<br><a href='https://tailscale.com/download' class='btn'>Download Tailscale</a></li>"
+          $htmlBody += "<li><strong>Connect</strong> to your Tailscale network</li>"
+          $htmlBody += "<li><strong>Use SSH</strong> to connect:<code>$($cred.sshCommand)</code></li>"
+          $htmlBody += "<li><strong>Enter password</strong> when prompted</li></ol>"
+          
+          $htmlBody += "<div class='alert' style='background:#d1ecf1;border-left-color:#17a2b8;'>"
+          $htmlBody += "💡 <strong>Pro Tip:</strong> Save these credentials in a secure password manager like 1Password, LastPass, or Bitwarden.</div>"
+          $htmlBody += "</div>"
+          
+          # Footer
+          $htmlBody += "<div class='footer'><p>🤖 This is an automated message from GitHub Actions</p>"
+          $htmlBody += "<p>Workflow Run #$runNumber | Generated at $currentTime</p>"
+          $htmlBody += "<p style='margin-top:15px;'><a href='https://github.com/$repo/actions/runs/$runId'>View Workflow Run</a></p>"
+          $htmlBody += "</div></div></body></html>"
+          
+          # Send Email
           try {
-              Write-Host "`n📨 Preparing to send email..." -ForegroundColor Cyan
+              Write-Host "Preparing to send email..." -ForegroundColor Cyan
               
               $securePassword = ConvertTo-SecureString $env:GMAIL_PASS -AsPlainText -Force
               $credential = New-Object System.Management.Automation.PSCredential($env:GMAIL_USER, $securePassword)
@@ -383,25 +321,25 @@ jobs:
               
               Send-MailMessage @mailParams
               
-              Write-Host "✅ Email sent successfully to: $recipientEmail" -ForegroundColor Green
+              Write-Host "Email sent successfully to: $recipientEmail" -ForegroundColor Green
               
           } catch {
-              Write-Host "❌ Failed to send email: $_" -ForegroundColor Red
-              Write-Host "`n💡 Troubleshooting tips:" -ForegroundColor Yellow
-              Write-Host "  • Verify GMAIL_USER and GMAIL_PASS secrets" -ForegroundColor Cyan
-              Write-Host "  • Use App Password (not regular password)" -ForegroundColor Cyan
-              Write-Host "  • Enable 2FA on Gmail" -ForegroundColor Cyan
-              Write-Host "  • Generate App Password at: https://myaccount.google.com/apppasswords" -ForegroundColor Cyan
-              Write-Host "`n📥 Download credentials from artifacts" -ForegroundColor Cyan
+              Write-Host "Failed to send email: $_" -ForegroundColor Red
+              Write-Host "Troubleshooting tips:" -ForegroundColor Yellow
+              Write-Host "  - Verify GMAIL_USER and GMAIL_PASS secrets" -ForegroundColor Cyan
+              Write-Host "  - Use App Password (not regular password)" -ForegroundColor Cyan
+              Write-Host "  - Enable 2FA on Gmail" -ForegroundColor Cyan
+              Write-Host "  - Generate App Password at: https://myaccount.google.com/apppasswords" -ForegroundColor Cyan
+              Write-Host "You can download credentials from artifacts" -ForegroundColor Cyan
           }
 
       - name: 🧹 Cleanup
         if: always()
         shell: bash
         run: |
-          echo "🧹 Cleaning up..."
+          echo "Cleaning up..."
           sudo tailscale down || true
-          echo "✅ Cleanup completed"
+          echo "Cleanup completed"
 
   summary:
     name: 📋 Summary
@@ -413,16 +351,14 @@ jobs:
       - name: 📊 Generate Summary
         shell: pwsh
         run: |
-          Write-Host "╔════════════════════════════════════════════════════════════╗" -ForegroundColor Green
-          Write-Host "║       ✅ TAILSCALE DEPLOYMENT COMPLETED ✅                 ║" -ForegroundColor Green
-          Write-Host "╚════════════════════════════════════════════════════════════╝" -ForegroundColor Green
+          Write-Host "Generating summary..." -ForegroundColor Green
           
-          Write-Host "`n📊 Results:" -ForegroundColor Yellow
-          Write-Host "  • Validation: ${{ needs.validate-config.result }}" -ForegroundColor Cyan
-          Write-Host "  • Setup: ${{ needs.tailscale-setup.result }}" -ForegroundColor Cyan
-          Write-Host "  • Email: ${{ needs.validate-config.outputs.recipient-email }}" -ForegroundColor Cyan
+          Write-Host "Results:" -ForegroundColor Yellow
+          Write-Host "  Validation: ${{ needs.validate-config.result }}" -ForegroundColor Cyan
+          Write-Host "  Setup: ${{ needs.tailscale-setup.result }}" -ForegroundColor Cyan
+          Write-Host "  Email: ${{ needs.validate-config.outputs.recipient-email }}" -ForegroundColor Cyan
           
-          Write-Host "`n📥 Next Steps:" -ForegroundColor Yellow
+          Write-Host "Next Steps:" -ForegroundColor Yellow
           Write-Host "  1. Check your email for credentials" -ForegroundColor Cyan
           Write-Host "  2. Download artifacts if needed" -ForegroundColor Cyan
           Write-Host "  3. Install Tailscale on your device" -ForegroundColor Cyan
