@@ -1,0 +1,73 @@
+  # أضف هذا Job في البداية
+  check-quota:
+    name: 💰 Check Resource Quota
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      has-quota: ${{ steps.check.outputs.has-quota }}
+      usage-percentage: ${{ steps.check.outputs.usage-percentage }}
+    
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup PowerShell
+        shell: bash
+        run: |
+          wget -q https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/packages-microsoft-prod.deb
+          sudo dpkg -i packages-microsoft-prod.deb
+          sudo apt-get update
+          sudo apt-get install -y powershell
+
+      - name: 💰 Check Quota
+        id: check
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
+        run: |
+          Write-Host "Checking resource quota..." -ForegroundColor Cyan
+          
+          try {
+              $headers = @{
+                  "Authorization" = "Bearer $env:GITHUB_TOKEN"
+                  "Accept" = "application/vnd.github+json"
+              }
+              
+              $owner = $env:GITHUB_REPOSITORY_OWNER
+              $url = "https://api.github.com/users/$owner/settings/billing/actions"
+              
+              $usage = Invoke-RestMethod -Uri $url -Headers $headers -Method Get
+              
+              $used = $usage.total_minutes_used
+              $total = $usage.included_minutes
+              $remaining = $total - $used
+              $percentage = [math]::Round(($used / $total) * 100, 2)
+              
+              Write-Host "Usage: $used / $total minutes ($percentage%)" -ForegroundColor Cyan
+              Write-Host "Remaining: $remaining minutes" -ForegroundColor Green
+              
+              $hasQuota = $remaining -gt 60  # على الأقل ساعة متبقية
+              
+              "has-quota=$($hasQuota.ToString().ToLower())" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+              "usage-percentage=$percentage" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+              
+              if (-not $hasQuota) {
+                  Write-Host "⚠️ WARNING: Low quota! Only $remaining minutes remaining" -ForegroundColor Yellow
+              }
+              
+          } catch {
+              Write-Host "⚠️ Could not check quota: $_" -ForegroundColor Yellow
+              # افتراض وجود رصيد للسماح بالاستمرار
+              "has-quota=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+              "usage-percentage=0" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          }
+
+  # عدل الـ orchestrator ليعتمد على check-quota
+  orchestrator:
+    name: 🎭 System Orchestrator
+    runs-on: ubuntu-latest
+    needs: check-quota
+    # أضف هذا الشرط
+    if: needs.check-quota.outputs.has-quota == 'true'
+    # ... باقي الكود
