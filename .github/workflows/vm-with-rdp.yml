@@ -1,0 +1,462 @@
+name: 🖥️ VM with RDP Access
+
+on:
+  workflow_dispatch:
+    inputs:
+      vm-count:
+        description: 'Number of VMs to create'
+        required: false
+        default: '1'
+        type: string
+      enable-rdp:
+        description: 'Enable RDP access'
+        required: false
+        type: boolean
+        default: true
+  schedule:
+    - cron: '0 */6 * * *'
+
+env:
+  TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
+  GMAIL_USER: ${{ secrets.GMAIL_USER }}
+  GMAIL_PASS: ${{ secrets.GMAIL_PASS }}
+
+jobs:
+  create-vm:
+    name: 🖥️ Create VM ${{ matrix.vm-id }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      matrix:
+        vm-id: [1, 2, 3]
+      fail-fast: false
+      max-parallel: 3
+    
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup Environment
+        shell: bash
+        run: |
+          echo "Setting up VM ${{ matrix.vm-id }}..."
+          
+          # Install PowerShell
+          wget -q https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/packages-microsoft-prod.deb
+          sudo dpkg -i packages-microsoft-prod.deb
+          sudo apt-get update
+          sudo apt-get install -y powershell
+          
+          # Install Tailscale
+          curl -fsSL https://tailscale.com/install.sh | sh
+          
+          # Install xRDP for remote desktop
+          sudo apt-get update
+          sudo apt-get install -y xrdp xfce4 xfce4-goodies dbus-x11
+          
+          # Install additional tools
+          sudo apt-get install -y net-tools curl wget git nano
+          
+          echo "Environment setup completed"
+
+      - name: 🔗 Connect to Tailscale
+        shell: bash
+        run: |
+          echo "Connecting VM ${{ matrix.vm-id }} to Tailscale..."
+          
+          VM_HOSTNAME="vm-${{ github.run_number }}-${{ matrix.vm-id }}"
+          
+          sudo tailscale up \
+            --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} \
+            --hostname=$VM_HOSTNAME \
+            --accept-routes \
+            --advertise-tags=tag:github-vm
+          
+          TAILSCALE_IP=$(sudo tailscale ip -4)
+          echo "Tailscale IP: $TAILSCALE_IP"
+          
+          echo "VM_HOSTNAME=$VM_HOSTNAME" >> $GITHUB_ENV
+          echo "TAILSCALE_IP=$TAILSCALE_IP" >> $GITHUB_ENV
+
+      - name: 👤 Create User Account
+        shell: bash
+        run: |
+          echo "Creating user account..."
+          
+          USERNAME="vmuser"
+          PASSWORD=$(openssl rand -base64 16 | tr -d "=+/" | cut -c1-16)
+          
+          # Create user with home directory
+          sudo useradd -m -s /bin/bash $USERNAME
+          echo "$USERNAME:$PASSWORD" | sudo chpasswd
+          
+          # Add user to sudo group
+          sudo usermod -aG sudo $USERNAME
+          
+          # Allow user to use sudo without password for setup
+          echo "$USERNAME ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/$USERNAME
+          
+          echo "USERNAME=$USERNAME" >> $GITHUB_ENV
+          echo "PASSWORD=$PASSWORD" >> $GITHUB_ENV
+          
+          echo "User created: $USERNAME"
+
+      - name: 🖥️ Configure RDP (xRDP)
+        if: github.event.inputs.enable-rdp != 'false'
+        shell: bash
+        run: |
+          echo "Configuring xRDP..."
+          
+          # Configure xRDP
+          sudo systemctl enable xrdp
+          sudo systemctl start xrdp
+          
+          # Configure firewall (if ufw is available)
+          sudo ufw allow 3389/tcp 2>/dev/null || true
+          
+          # Set default session to XFCE
+          echo "xfce4-session" | sudo tee /home/$USERNAME/.xsession
+          sudo chown $USERNAME:$USERNAME /home/$USERNAME/.xsession
+          
+          # Configure xRDP to use local session
+          sudo sed -i 's/port=3389/port=3389/g' /etc/xrdp/xrdp.ini
+          sudo sed -i 's/max_bpp=32/max_bpp=128/g' /etc/xrdp/xrdp.ini
+          
+          # Restart xRDP
+          sudo systemctl restart xrdp
+          
+          # Check RDP status
+          RDP_STATUS=$(sudo systemctl is-active xrdp)
+          echo "RDP Status: $RDP_STATUS"
+          
+          echo "RDP_PORT=3389" >> $GITHUB_ENV
+          echo "RDP_STATUS=$RDP_STATUS" >> $GITHUB_ENV
+
+      - name: 🔐 Generate VM Credentials
+        shell: pwsh
+        run: |
+          Write-Host "Generating VM credentials..." -ForegroundColor Cyan
+          
+          $vmData = @{
+              vmId = "${{ matrix.vm-id }}"
+              vmName = $env:VM_HOSTNAME
+              runNumber = "${{ github.run_number }}"
+              tailscaleIP = $env:TAILSCALE_IP
+              username = $env:USERNAME
+              password = $env:PASSWORD
+              rdpPort = $env:RDP_PORT
+              rdpStatus = $env:RDP_STATUS
+              sshCommand = "ssh $($env:USERNAME)@$($env:TAILSCALE_IP)"
+              rdpCommand = "mstsc /v:$($env:TAILSCALE_IP):$($env:RDP_PORT)"
+              osType = "Ubuntu Linux"
+              desktop = "XFCE4"
+              createdAt = Get-Date -Format 'o'
+              expiresAt = (Get-Date).AddHours(6).ToString('o')
+              status = "active"
+              accessMethods = @("SSH", "RDP", "Tailscale")
+          }
+          
+          New-Item -ItemType Directory -Path "vm-data" -Force | Out-Null
+          $vmData | ConvertTo-Json -Depth 10 | Set-Content "vm-data/vm-${{ matrix.vm-id }}-data.json"
+          
+          Write-Host "VM Data generated:" -ForegroundColor Green
+          Write-Host "  VM Name: $($vmData.vmName)" -ForegroundColor Cyan
+          Write-Host "  IP: $($vmData.tailscaleIP)" -ForegroundColor Green
+          Write-Host "  Username: $($vmData.username)" -ForegroundColor Cyan
+          Write-Host "  Password: $($vmData.password)" -ForegroundColor Yellow
+          Write-Host "  RDP: Enabled on port $($vmData.rdpPort)" -ForegroundColor Magenta
+
+      - name: 📤 Upload VM Data
+        uses: actions/upload-artifact@v4
+        with:
+          name: vm-${{ matrix.vm-id }}-data-${{ github.run_number }}
+          path: vm-data/vm-${{ matrix.vm-id }}-data.json
+          retention-days: 7
+
+      - name: 🏃 Keep VM Running
+        shell: bash
+        run: |
+          echo "VM is now running and accessible..."
+          echo "This VM will run for approximately 6 hours"
+          
+          START_TIME=$(date +%s)
+          MAX_RUNTIME=21000  # 5h 50m
+          
+          while true; do
+            CURRENT_TIME=$(date +%s)
+            ELAPSED=$((CURRENT_TIME - START_TIME))
+            REMAINING=$((MAX_RUNTIME - ELAPSED))
+            
+            if [ $ELAPSED -ge $MAX_RUNTIME ]; then
+              echo "Maximum runtime reached. Shutting down..."
+              break
+            fi
+            
+            MINUTES_REMAINING=$((REMAINING / 60))
+            echo "[$(date)] VM running... ($MINUTES_REMAINING minutes remaining)"
+            
+            # Check services
+            sudo systemctl is-active --quiet xrdp && echo "  RDP: Active" || echo "  RDP: Inactive"
+            sudo tailscale status --json > /dev/null 2>&1 && echo "  Tailscale: Connected" || echo "  Tailscale: Disconnected"
+            
+            sleep 300  # Check every 5 minutes
+          done
+
+      - name: 🧹 Cleanup
+        if: always()
+        shell: bash
+        run: |
+          echo "Cleaning up VM ${{ matrix.vm-id }}..."
+          sudo systemctl stop xrdp || true
+          sudo tailscale down || true
+          echo "Cleanup completed"
+
+  send-email:
+    name: 📧 Send VM Details Email
+    runs-on: ubuntu-latest
+    needs: create-vm
+    if: always()
+    
+    steps:
+      - name: 📥 Download All VM Data
+        uses: actions/download-artifact@v4
+        with:
+          path: all-vms
+
+      - name: 🔧 Setup PowerShell
+        shell: bash
+        run: |
+          wget -q https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/packages-microsoft-prod.deb
+          sudo dpkg -i packages-microsoft-prod.deb
+          sudo apt-get update
+          sudo apt-get install -y powershell
+
+      - name: 📧 Prepare and Send Email
+        shell: pwsh
+        env:
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_PASS: ${{ secrets.GMAIL_PASS }}
+          RUN_NUMBER: ${{ github.run_number }}
+          RUN_ID: ${{ github.run_id }}
+          REPO: ${{ github.repository }}
+        run: |
+          Write-Host "Preparing VM details email..." -ForegroundColor Cyan
+          
+          # جمع بيانات جميع VMs
+          $allVMs = @()
+          if (Test-Path "all-vms") {
+              Get-ChildItem "all-vms" -Recurse -Filter "*.json" | ForEach-Object {
+                  $vmData = Get-Content $_.FullName | ConvertFrom-Json
+                  $allVMs += $vmData
+              }
+          }
+          
+          if ($allVMs.Count -eq 0) {
+              Write-Host "No VM data found to send" -ForegroundColor Yellow
+              exit 0
+          }
+          
+          Write-Host "Found $($allVMs.Count) VMs to report" -ForegroundColor Green
+          
+          $runNumber = $env:RUN_NUMBER
+          $runId = $env:RUN_ID
+          $repo = $env:REPO
+          $currentTime = Get-Date -Format 'yyyy-MM-dd HH:mm:ss UTC'
+          
+          # بناء HTML
+          $htmlBody = "<!DOCTYPE html><html><head><meta charset='UTF-8'><style>"
+          $htmlBody += "body{font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);padding:20px;margin:0;}"
+          $htmlBody += ".container{max-width:900px;margin:0 auto;background:white;border-radius:15px;box-shadow:0 10px 40px rgba(0,0,0,0.3);overflow:hidden;}"
+          $htmlBody += ".header{background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);color:white;padding:30px;text-align:center;}"
+          $htmlBody += ".header h1{margin:0;font-size:32px;}"
+          $htmlBody += ".content{padding:30px;}"
+          $htmlBody += ".vm-card{background:linear-gradient(135deg,#f5f7fa 0%,#c3cfe2 100%);padding:25px;margin:20px 0;border-radius:12px;box-shadow:0 4px 8px rgba(0,0,0,0.1);border-left:6px solid #3498db;}"
+          $htmlBody += ".vm-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;border-bottom:2px solid #3498db;padding-bottom:10px;}"
+          $htmlBody += ".vm-name{font-size:24px;font-weight:bold;color:#2c3e50;}"
+          $htmlBody += ".vm-status{background:#28a745;color:white;padding:5px 15px;border-radius:20px;font-size:12px;font-weight:bold;}"
+          $htmlBody += ".info-grid{display:grid;grid-template-columns:1fr 1fr;gap:15px;margin:15px 0;}"
+          $htmlBody += ".info-item{background:white;padding:15px;border-radius:8px;box-shadow:0 2px 4px rgba(0,0,0,0.05);}"
+          $htmlBody += ".info-label{font-size:11px;text-transform:uppercase;color:#7f8c8d;font-weight:600;margin-bottom:5px;}"
+          $htmlBody += ".info-value{font-family:'Courier New',monospace;font-size:14px;color:#2c3e50;font-weight:bold;word-break:break-all;}"
+          $htmlBody += ".password-box{background:#fff3cd;border:2px solid #ffc107;padding:20px;border-radius:8px;text-align:center;margin:15px 0;}"
+          $htmlBody += ".password-label{font-size:12px;color:#856404;font-weight:600;margin-bottom:8px;}"
+          $htmlBody += ".password-value{font-size:20px;font-family:'Courier New',monospace;font-weight:bold;color:#856404;letter-spacing:2px;}"
+          $htmlBody += ".access-methods{display:flex;gap:10px;margin:20px 0;flex-wrap:wrap;}"
+          $htmlBody += ".access-btn{flex:1;min-width:150px;background:#3498db;color:white;padding:15px;border-radius:8px;text-align:center;text-decoration:none;font-weight:bold;transition:all 0.3s;}"
+          $htmlBody += ".access-btn:hover{background:#2980b9;transform:translateY(-2px);box-shadow:0 4px 8px rgba(0,0,0,0.2);}"
+          $htmlBody += ".access-btn.rdp{background:#e74c3c;}"
+          $htmlBody += ".access-btn.rdp:hover{background:#c0392b;}"
+          $htmlBody += ".access-btn.ssh{background:#27ae60;}"
+          $htmlBody += ".access-btn.ssh:hover{background:#229954;}"
+          $htmlBody += ".command-box{background:#2c3e50;color:#ecf0f1;padding:15px;border-radius:8px;font-family:'Courier New',monospace;font-size:13px;margin:10px 0;overflow-x:auto;}"
+          $htmlBody += ".instructions{background:#e8f4f8;border-left:4px solid #3498db;padding:20px;margin:20px 0;border-radius:5px;}"
+          $htmlBody += ".instructions h3{margin-top:0;color:#2c3e50;}"
+          $htmlBody += ".instructions ol{margin:10px 0;padding-left:20px;}"
+          $htmlBody += ".instructions li{margin:8px 0;color:#34495e;}"
+          $htmlBody += ".footer{background:#f8f9fa;padding:20px;text-align:center;color:#6c757d;font-size:12px;}"
+          $htmlBody += ".alert{background:#fff3cd;border-left:4px solid #ffc107;padding:15px;margin:20px 0;border-radius:5px;}"
+          $htmlBody += "</style></head><body><div class='container'>"
+          
+          # Header
+          $htmlBody += "<div class='header'><div style='font-size:48px;margin-bottom:10px;'>🖥️</div>"
+          $htmlBody += "<h1>Your VMs are Ready!</h1>"
+          $htmlBody += "<p style='font-size:16px;opacity:0.9;margin:10px 0;'>$($allVMs.Count) Virtual Machine(s) Created</p>"
+          $htmlBody += "<p style='font-size:12px;opacity:0.8;'>Run #$runNumber | $currentTime</p></div>"
+          
+          # Content
+          $htmlBody += "<div class='content'>"
+          
+          # Alert
+          $htmlBody += "<div class='alert'>⚠️ <strong>Important:</strong> These VMs will run for approximately 6 hours. "
+          $htmlBody += "Save any important work before expiration. All credentials are single-use and expire with the VM.</div>"
+          
+          # VMs Cards
+          foreach ($vm in $allVMs) {
+              $htmlBody += "<div class='vm-card'>"
+              
+              # VM Header
+              $htmlBody += "<div class='vm-header'><div class='vm-name'>🖥️ $($vm.vmName)</div>"
+              $htmlBody += "<div class='vm-status'>● ACTIVE</div></div>"
+              
+              # Info Grid
+              $htmlBody += "<div class='info-grid'>"
+              
+              $htmlBody += "<div class='info-item'><div class='info-label'>📍 Tailscale IP</div>"
+              $htmlBody += "<div class='info-value' style='color:#27ae60;'>$($vm.tailscaleIP)</div></div>"
+              
+              $htmlBody += "<div class='info-item'><div class='info-label'>👤 Username</div>"
+              $htmlBody += "<div class='info-value'>$($vm.username)</div></div>"
+              
+              $htmlBody += "<div class='info-item'><div class='info-label'>💻 Operating System</div>"
+              $htmlBody += "<div class='info-value'>$($vm.osType)</div></div>"
+              
+              $htmlBody += "<div class='info-item'><div class='info-label'>🖼️ Desktop Environment</div>"
+              $htmlBody += "<div class='info-value'>$($vm.desktop)</div></div>"
+              
+              $htmlBody += "<div class='info-item'><div class='info-label'>🔌 RDP Port</div>"
+              $htmlBody += "<div class='info-value'>$($vm.rdpPort)</div></div>"
+              
+              $htmlBody += "<div class='info-item'><div class='info-label'>📅 Created At</div>"
+              $htmlBody += "<div class='info-value' style='font-size:11px;'>$($vm.createdAt)</div></div>"
+              
+              $htmlBody += "</div>"
+              
+              # Password Box
+              $htmlBody += "<div class='password-box'><div class='password-label'>🔑 PASSWORD</div>"
+              $htmlBody += "<div class='password-value'>$($vm.password)</div></div>"
+              
+              # Access Methods
+              $htmlBody += "<div class='access-methods'>"
+              $htmlBody += "<div class='access-btn rdp'>🖥️ RDP Access<br><small>Remote Desktop</small></div>"
+              $htmlBody += "<div class='access-btn ssh'>💻 SSH Access<br><small>Command Line</small></div>"
+              $htmlBody += "<div class='access-btn'>🔗 Tailscale VPN<br><small>Secure Network</small></div>"
+              $htmlBody += "</div>"
+              
+              # Commands
+              $htmlBody += "<div style='margin-top:20px;'>"
+              $htmlBody += "<div style='font-weight:600;color:#2c3e50;margin-bottom:10px;'>📋 Connection Commands:</div>"
+              $htmlBody += "<div class='command-box'>RDP: mstsc /v:$($vm.tailscaleIP):$($vm.rdpPort)</div>"
+              $htmlBody += "<div class='command-box'>SSH: $($vm.sshCommand)</div>"
+              $htmlBody += "</div>"
+              
+              $htmlBody += "</div>"
+          }
+          
+          # Instructions
+          $htmlBody += "<div class='instructions'>"
+          $htmlBody += "<h3>📖 How to Connect:</h3>"
+          $htmlBody += "<h4>Option 1: RDP (Remote Desktop) - Windows Users</h4><ol>"
+          $htmlBody += "<li>Install <strong>Tailscale</strong> from <a href='https://tailscale.com/download'>tailscale.com/download</a></li>"
+          $htmlBody += "<li>Connect to your Tailscale network</li>"
+          $htmlBody += "<li>Press <code>Win + R</code>, type <code>mstsc</code> and press Enter</li>"
+          $htmlBody += "<li>Enter the Tailscale IP address: <code>TAILSCALE_IP:3389</code></li>"
+          $htmlBody += "<li>Login with the username and password above</li></ol>"
+          
+          $htmlBody += "<h4>Option 2: RDP - Mac Users</h4><ol>"
+          $htmlBody += "<li>Install <strong>Microsoft Remote Desktop</strong> from App Store</li>"
+          $htmlBody += "<li>Install and connect <strong>Tailscale</strong></li>"
+          $htmlBody += "<li>Open Remote Desktop and add new PC</li>"
+          $htmlBody += "<li>Enter Tailscale IP and credentials</li></ol>"
+          
+          $htmlBody += "<h4>Option 3: SSH (Command Line)</h4><ol>"
+          $htmlBody += "<li>Install and connect Tailscale</li>"
+          $htmlBody += "<li>Open terminal and use the SSH command above</li>"
+          $htmlBody += "<li>Enter the password when prompted</li></ol>"
+          $htmlBody += "</div>"
+          
+          $htmlBody += "<div style='background:#d4edda;border-left:4px solid #28a745;padding:15px;margin:20px 0;border-radius:5px;'>"
+          $htmlBody += "💡 <strong>Pro Tips:</strong><br>"
+          $htmlBody += "• Save these credentials in a password manager<br>"
+          $htmlBody += "• Install Tailscale on all devices you want to access from<br>"
+          $htmlBody += "• For best RDP experience, use a wired internet connection<br>"
+          $htmlBody += "• The desktop environment is XFCE4 (lightweight and fast)"
+          $htmlBody += "</div></div>"
+          
+          # Footer
+          $htmlBody += "<div class='footer'>"
+          $htmlBody += "<p>🤖 Automated VM Deployment System | GitHub Actions</p>"
+          $htmlBody += "<p><a href='https://github.com/$repo/actions/runs/$runId' style='color:#667eea;text-decoration:none;font-weight:bold;'>View Workflow Run #$runNumber</a></p>"
+          $htmlBody += "<p style='margin-top:15px;font-size:11px;color:#adb5bd;'>This is an automated message. VMs will expire in 6 hours.</p>"
+          $htmlBody += "</div></div></body></html>"
+          
+          # Send Email
+          try {
+              Write-Host "Sending email..." -ForegroundColor Cyan
+              
+              $securePass = ConvertTo-SecureString $env:GMAIL_PASS -AsPlainText -Force
+              $credential = New-Object System.Management.Automation.PSCredential($env:GMAIL_USER, $securePass)
+              
+              Send-MailMessage `
+                  -From $env:GMAIL_USER `
+                  -To $env:GMAIL_USER `
+                  -Subject "🖥️ Your $($allVMs.Count) VM(s) are Ready! (Run #$runNumber)" `
+                  -Body $htmlBody `
+                  -BodyAsHtml `
+                  -SmtpServer "smtp.gmail.com" `
+                  -Port 587 `
+                  -UseSsl `
+                  -Credential $credential
+              
+              Write-Host "Email sent successfully!" -ForegroundColor Green
+              
+          } catch {
+              Write-Host "Failed to send email: $_" -ForegroundColor Red
+          }
+
+  summary:
+    name: 📋 Deployment Summary
+    runs-on: ubuntu-latest
+    needs: [create-vm, send-email]
+    if: always()
+    
+    steps:
+      - name: 📊 Generate Summary
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+          # 🖥️ VM Deployment Complete
+          
+          ## ✅ Status
+          
+          - **VMs Created:** ${{ needs.create-vm.result }}
+          - **Email Sent:** ${{ needs.send-email.result }}
+          
+          ## 📧 Next Steps
+          
+          1. ✉️ Check your email for complete VM details
+          2. 📥 Download Tailscale from [tailscale.com/download](https://tailscale.com/download)
+          3. 🔗 Connect to your Tailscale network
+          4. 🖥️ Use RDP or SSH to access your VMs
+          
+          ## 🔗 Access Methods
+          
+          - **RDP (Windows):** Use `mstsc` with Tailscale IP
+          - **RDP (Mac):** Use Microsoft Remote Desktop app
+          - **SSH:** Use terminal with provided command
+          
+          ## ⏱️ Important
+          
+          VMs will run for ~6 hours. Save your work before expiration!
+          
+          ---
+          *Run #${{ github.run_number }}*
+          EOF
