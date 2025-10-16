@@ -1,0 +1,28 @@
+{
+  "notifications": {
+    "enabled": true,
+    "channels": ["email"],
+    "thresholds": {
+      "warning": 80,
+      "critical": 95,
+      "emergency": 98
+    },
+    "schedule": {
+      "daily_summary": "0 9 * * *",
+      "weekly_report": "0 9 * * 1",
+      "instant_alerts": true
+    },
+    "email": {
+      "recipient": "your-email@example.com",
+      "send_daily_summary": true,
+      "send_weekly_report": true,
+      "attach_json_report": true
+    }
+  },
+  "actions_on_low_quota": {
+    "pause_non_critical_workflows": true,
+    "send_emergency_backup": true,
+    "reduce_runner_count": true,
+    "notify_admins": true
+  }
+}
