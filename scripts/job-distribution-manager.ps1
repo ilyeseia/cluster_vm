@@ -466,4 +466,36 @@ try {
         }
         
         'execute' {
+            Execute-Jobs
+        }
         
+        'status' {
+            Show-JobStatus
+        }
+        
+        'cancel' {
+            if ($JobId) {
+                Cancel-Job -JobId $JobId
+            } else {
+                Write-Host "⚠️  JobId required for cancel action" -ForegroundColor Yellow
+            }
+        }
+        
+        'balance' {
+            Distribute-Jobs
+            Execute-Jobs
+        }
+        
+        'clear' {
+            Clear-CompletedJobs
+        }
+    }
+    
+    Write-Host "`n✅ Operation completed successfully!" -ForegroundColor Green
+    Write-Log "Job Distribution Manager completed successfully" -Level SUCCESS
+}
+catch {
+    Write-Log "Error: $_" -Level ERROR
+    Write-Host "`n❌ Operation failed: $_" -ForegroundColor Red
+    exit 1
+}
