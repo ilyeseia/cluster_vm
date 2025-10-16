@@ -1,1 +1,29 @@
-
+{
+  "desiredVmCount": 3,
+  "vmCreationInterval": 120,
+  "vmLifetime": 360,
+  "checkInterval": 60,
+  "masterElectionStrategy": "max-remaining-time",
+  "healthCheckInterval": 30,
+  "maxJobsPerVM": 10,
+  "maxConcurrentJobs": 3,
+  "createdAt": "2024-01-15T10:00:00Z",
+  "version": "1.0.0",
+  "features": {
+    "autoCreation": true,
+    "autoElection": true,
+    "monitoring": true,
+    "alerts": true,
+    "reporting": true
+  },
+  "performance": {
+    "timeout": 600,
+    "retryCount": 3,
+    "retryDelay": 5
+  },
+  "thresholds": {
+    "cpuUsage": 80,
+    "memoryUsage": 85,
+    "diskUsage": 90
+  }
+}
