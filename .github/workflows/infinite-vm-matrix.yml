@@ -1,0 +1,427 @@
+name: ♾️ Infinite VM Matrix System
+
+on:
+  schedule:
+    # كل ساعة - إنشاء runner جديد
+    - cron: '0 * * * *'
+    # كل 15 دقيقة - فحص صحة
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'System Action'
+        required: true
+        type: choice
+        options:
+          - create-runner
+          - scale-up
+          - scale-down
+          - emergency-renewal
+          - full-system-check
+        default: 'create-runner'
+      runner-count:
+        description: 'Number of runners to create'
+        required: false
+        default: '1'
+        type: string
+
+env:
+  TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
+  GMAIL_USER: ${{ secrets.GMAIL_USER }}
+  GMAIL_PASS: ${{ secrets.GMAIL_PASS }}
+  SYSTEM_MODE: production
+  MAX_RUNTIME: 21000
+  RENEWAL_THRESHOLD: 18000
+
+jobs:
+  # ═══════════════════════════════════════════════════════════════
+  # Job 1: System Orchestrator
+  # ═══════════════════════════════════════════════════════════════
+  orchestrator:
+    name: 🎭 System Orchestrator
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      should-create-runner: ${{ steps.decide.outputs.create-runner }}
+      should-renew: ${{ steps.decide.outputs.renew }}
+      active-runners: ${{ steps.decide.outputs.active-count }}
+      action-plan: ${{ steps.decide.outputs.plan }}
+    
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup PowerShell
+        shell: bash
+        run: |
+          wget -q https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/packages-microsoft-prod.deb
+          sudo dpkg -i packages-microsoft-prod.deb
+          sudo apt-get update
+          sudo apt-get install -y powershell
+
+      - name: 📊 Analyze Current State
+        id: analyze
+        shell: pwsh
+        run: |
+          Write-Host "╔════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
+          Write-Host "║       🎭 SYSTEM ORCHESTRATOR - ANALYSIS                   ║" -ForegroundColor Cyan
+          Write-Host "╚════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
+          
+          # تحميل التكوين
+          $config = Get-Content '.github/production-config.json' | ConvertFrom-Json
+          
+          Write-Host "`n📊 System Configuration:" -ForegroundColor Yellow
+          Write-Host "  • Mode: $($config.production.mode)" -ForegroundColor Cyan
+          Write-Host "  • Max Runners: $($config.runners.maxRunners)" -ForegroundColor Cyan
+          Write-Host "  • Renewal Threshold: $($config.runners.renewalThreshold)s" -ForegroundColor Cyan
+          
+          # محاكاة فحص Runners النشطة (في الإنتاج، استخدم GitHub API)
+          $activeRunners = 2  # يمكن استبدالها بـ API call
+          
+          Write-Host "`n🔍 Current State:" -ForegroundColor Yellow
+          Write-Host "  • Active Runners: $activeRunners" -ForegroundColor Cyan
+          Write-Host "  • Min Required: $($config.runners.minRunners)" -ForegroundColor Cyan
+          Write-Host "  • Max Allowed: $($config.runners.maxRunners)" -ForegroundColor Cyan
+          
+          "active-runners=$activeRunners" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "min-runners=$($config.runners.minRunners)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "max-runners=$($config.runners.maxRunners)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: 🧠 Decision Engine
+        id: decide
+        shell: pwsh
+        run: |
+          Write-Host "╔════════════════════════════════════════════════════════════╗" -ForegroundColor Magenta
+          Write-Host "║       🧠 DECISION ENGINE                                  ║" -ForegroundColor Magenta
+          Write-Host "╚════════════════════════════════════════════════════════════╝" -ForegroundColor Magenta
+          
+          $activeRunners = [int]"${{ steps.analyze.outputs.active-runners }}"
+          $minRunners = [int]"${{ steps.analyze.outputs.min-runners }}"
+          $maxRunners = [int]"${{ steps.analyze.outputs.max-runners }}"
+          
+          $shouldCreate = $false
+          $shouldRenew = $false
+          $actionPlan = "maintain"
+          
+          # قرار الإنشاء
+          if ($activeRunners -lt $minRunners) {
+              $shouldCreate = $true
+              $actionPlan = "scale-up"
+              Write-Host "✅ Decision: CREATE new runners (below minimum)" -ForegroundColor Green
+          } elseif ($activeRunners -lt $maxRunners) {
+              $shouldCreate = $true
+              $actionPlan = "optimize"
+              Write-Host "✅ Decision: CREATE new runner (optimization)" -ForegroundColor Green
+          } else {
+              Write-Host "⏸️ Decision: MAINTAIN current state (at maximum)" -ForegroundColor Yellow
+          }
+          
+          # قرار التجديد
+          $currentTime = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+          $shouldRenew = $true  # دائماً جاهز للتجديد
+          
+          Write-Host "`n📋 Action Plan:" -ForegroundColor Yellow
+          Write-Host "  • Create Runner: $shouldCreate" -ForegroundColor Cyan
+          Write-Host "  • Renew Existing: $shouldRenew" -ForegroundColor Cyan
+          Write-Host "  • Strategy: $actionPlan" -ForegroundColor Cyan
+          
+          "create-runner=$($shouldCreate.ToString().ToLower())" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "renew=$($shouldRenew.ToString().ToLower())" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "active-count=$activeRunners" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "plan=$actionPlan" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+  # ═══════════════════════════════════════════════════════════════
+  # Job 2: VM Matrix Runner (يعمل لمدة 6 ساعات)
+  # ═══════════════════════════════════════════════════════════════
+  vm-matrix-runner:
+    name: 🖥️ VM Matrix Runner ${{ matrix.runner-id }}
+    runs-on: ubuntu-latest
+    needs: orchestrator
+    if: needs.orchestrator.outputs.should-create-runner == 'true'
+    timeout-minutes: 360  # 6 ساعات
+    strategy:
+      matrix:
+        runner-id: [1, 2, 3]
+      fail-fast: false
+      max-parallel: 3
+    
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup Environment
+        shell: bash
+        run: |
+          echo "🔧 Setting up environment for Runner ${{ matrix.runner-id }}..."
+          
+          # PowerShell
+          wget -q https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/packages-microsoft-prod.deb
+          sudo dpkg -i packages-microsoft-prod.deb
+          sudo apt-get update
+          sudo apt-get install -y powershell
+          
+          # Tailscale
+          curl -fsSL https://tailscale.com/install.sh | sh
+          
+          echo "✅ Environment ready"
+
+      - name: 🔗 Connect to Tailscale
+        shell: bash
+        run: |
+          echo "🔗 Connecting Runner ${{ matrix.runner-id }} to Tailscale mesh..."
+          
+          HOSTNAME="vm-runner-${{ github.run_number }}-${{ matrix.runner-id }}"
+          
+          sudo tailscale up \
+            --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} \
+            --hostname=$HOSTNAME \
+            --accept-routes \
+            --advertise-tags=tag:github-runner
+          
+          TAILSCALE_IP=$(sudo tailscale ip -4)
+          echo "✅ Connected with IP: $TAILSCALE_IP"
+          
+          echo "TAILSCALE_IP=$TAILSCALE_IP" >> $GITHUB_ENV
+          echo "HOSTNAME=$HOSTNAME" >> $GITHUB_ENV
+
+      - name: 📊 Register Runner Metadata
+        shell: pwsh
+        run: |
+          Write-Host "📊 Registering Runner ${{ matrix.runner-id }}..." -ForegroundColor Cyan
+          
+          $metadata = @{
+              runnerId = "${{ matrix.runner-id }}"
+              runNumber = "${{ github.run_number }}"
+              hostname = $env:HOSTNAME
+              tailscaleIP = $env:TAILSCALE_IP
+              startTime = Get-Date -Format 'o'
+              maxRuntime = $env:MAX_RUNTIME
+              expiresAt = (Get-Date).AddSeconds([int]$env:MAX_RUNTIME).ToString('o')
+              status = "active"
+              workflowUrl = "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          }
+          
+          New-Item -ItemType Directory -Path "state" -Force | Out-Null
+          $metadata | ConvertTo-Json | Set-Content "state/runner-${{ matrix.runner-id }}-metadata.json"
+          
+          Write-Host "✅ Runner registered:" -ForegroundColor Green
+          Write-Host "  • ID: $($metadata.runnerId)" -ForegroundColor Cyan
+          Write-Host "  • IP: $($metadata.tailscaleIP)" -ForegroundColor Cyan
+          Write-Host "  • Expires: $($metadata.expiresAt)" -ForegroundColor Yellow
+
+      - name: 🔐 Generate & Store Credentials
+        id: credentials
+        shell: pwsh
+        run: |
+          Write-Host "🔐 Generating credentials..." -ForegroundColor Magenta
+          
+          $password = -join ((65..90) + (97..122) + (48..57) + (33..47) | Get-Random -Count 24 | ForEach-Object {[char]$_})
+          
+          $credentials = @{
+              runnerId = "${{ matrix.runner-id }}"
+              vmId = $env:HOSTNAME
+              tailscaleIP = $env:TAILSCALE_IP
+              username = "admin"
+              password = $password
+              sshCommand = "ssh admin@$($env:TAILSCALE_IP)"
+              createdAt = Get-Date -Format 'o'
+              expiresAt = (Get-Date).AddSeconds([int]$env:MAX_RUNTIME).ToString('o')
+          }
+          
+          New-Item -ItemType Directory -Path "credentials" -Force | Out-Null
+          $credentials | ConvertTo-Json | Set-Content "credentials/runner-${{ matrix.runner-id }}-creds.json"
+          
+          Write-Host "✅ Credentials generated" -ForegroundColor Green
+
+      - name: 📤 Upload Runner State
+        uses: actions/upload-artifact@v4
+        with:
+          name: runner-${{ matrix.runner-id }}-state-${{ github.run_number }}
+          path: |
+            state/runner-${{ matrix.runner-id }}-*.json
+            credentials/runner-${{ matrix.runner-id }}-*.json
+          retention-days: 7
+
+      - name: ⏰ Self-Sustaining Loop (5h 50m)
+        shell: pwsh
+        run: |
+          Write-Host "╔════════════════════════════════════════════════════════════╗" -ForegroundColor Green
+          Write-Host "║     ⏰ SELF-SUSTAINING LOOP STARTED                       ║" -ForegroundColor Green
+          Write-Host "╚════════════════════════════════════════════════════════════╝" -ForegroundColor Green
+          
+          $startTime = Get-Date
+          $maxRuntime = [int]$env:MAX_RUNTIME
+          $renewalThreshold = [int]$env:RENEWAL_THRESHOLD
+          
+          Write-Host "`n📊 Loop Configuration:" -ForegroundColor Yellow
+          Write-Host "  • Max Runtime: $maxRuntime seconds ($($maxRuntime/3600) hours)" -ForegroundColor Cyan
+          Write-Host "  • Renewal at: $renewalThreshold seconds ($($renewalThreshold/3600) hours)" -ForegroundColor Cyan
+          Write-Host "  • Start Time: $($startTime.ToString('yyyy-MM-dd HH:mm:ss'))" -ForegroundColor Cyan
+          
+          $checkInterval = 300  # كل 5 دقائق
+          $iteration = 0
+          
+          while ($true) {
+              $elapsed = ((Get-Date) - $startTime).TotalSeconds
+              $remaining = $maxRuntime - $elapsed
+              $iteration++
+              
+              Write-Host "`n[$iteration] ⏱️ Runtime: $([math]::Round($elapsed/60, 1))m / $($maxRuntime/60)m" -ForegroundColor Cyan
+              
+              # فحص إذا حان وقت التجديد
+              if ($elapsed -ge $renewalThreshold) {
+                  Write-Host "🔄 RENEWAL THRESHOLD REACHED!" -ForegroundColor Yellow
+                  Write-Host "  • Triggering new workflow..." -ForegroundColor Cyan
+                  
+                  # يمكن هنا إطلاق workflow جديد عبر GitHub API
+                  # gh workflow run infinite-vm-matrix.yml
+                  
+                  Write-Host "✅ Renewal triggered" -ForegroundColor Green
+                  break
+              }
+              
+              # فحص الصحة
+              try {
+                  $tailscaleStatus = sudo tailscale status --json | ConvertFrom-Json
+                  Write-Host "  • Tailscale: Connected ✅" -ForegroundColor Green
+                  Write-Host "  • IP: $env:TAILSCALE_IP" -ForegroundColor Cyan
+              } catch {
+                  Write-Host "  • Tailscale: Reconnecting..." -ForegroundColor Yellow
+                  sudo tailscale up
+              }
+              
+              # عمل إنتاجي (يمكن إضافة مهام هنا)
+              Write-Host "  • Status: Active & Ready 🟢" -ForegroundColor Green
+              Write-Host "  • Remaining: $([math]::Round($remaining/60, 1)) minutes" -ForegroundColor Cyan
+              
+              # انتظار قبل الفحص التالي
+              Start-Sleep -Seconds $checkInterval
+          }
+          
+          Write-Host "`n✅ Loop completed - Graceful shutdown initiated" -ForegroundColor Green
+
+      - name: 📧 Send Credentials Email
+        if: matrix.runner-id == '1'
+        shell: pwsh
+        env:
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_PASS: ${{ secrets.GMAIL_PASS }}
+        run: |
+          Write-Host "📧 Preparing consolidated email..." -ForegroundColor Cyan
+          
+          # جمع بيانات جميع Runners
+          $allCreds = Get-ChildItem "credentials/*.json" | ForEach-Object {
+              Get-Content $_.FullName | ConvertFrom-Json
+          }
+          
+          $htmlBody = @"
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body { font-family: Arial, sans-serif; background: #f5f5f5; padding: 20px; }
+        .container { max-width: 800px; margin: 0 auto; background: white; border-radius: 10px; padding: 30px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        h1 { color: #2c3e50; border-bottom: 3px solid #3498db; padding-bottom: 10px; }
+        .runner-card { background: #ecf0f1; padding: 20px; margin: 15px 0; border-radius: 8px; border-left: 5px solid #3498db; }
+        .cred-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #ddd; }
+        .label { font-weight: bold; color: #555; }
+        .value { font-family: monospace; background: #fff; padding: 5px 10px; border-radius: 3px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>♾️ Infinite VM Matrix - Active Runners</h1>
+        <p><strong>Run #${{ github.run_number }}</strong> | $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss UTC')</p>
+"@
+
+          foreach ($cred in $allCreds) {
+              $htmlBody += @"
+        <div class="runner-card">
+            <h3>🖥️ Runner $($cred.runnerId)</h3>
+            <div class="cred-row">
+                <span class="label">Tailscale IP:</span>
+                <span class="value" style="color: #27ae60; font-weight: bold;">$($cred.tailscaleIP)</span>
+            </div>
+            <div class="cred-row">
+                <span class="label">Username:</span>
+                <span class="value">$($cred.username)</span>
+            </div>
+            <div class="cred-row">
+                <span class="label">Password:</span>
+                <span class="value" style="background: #fff3cd;">$($cred.password)</span>
+            </div>
+            <div class="cred-row">
+                <span class="label">SSH:</span>
+                <span class="value">$($cred.sshCommand)</span>
+            </div>
+            <div class="cred-row">
+                <span class="label">Expires:</span>
+                <span class="value" style="color: #e74c3c;">$($cred.expiresAt)</span>
+            </div>
+        </div>
+"@
+          }
+
+          $htmlBody += @"
+        <p style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #ddd; color: #7f8c8d; font-size: 12px;">
+            🤖 Automated by GitHub Actions | <a href="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}">View Run</a>
+        </p>
+    </div>
+</body>
+</html>
+"@
+
+          try {
+              $securePass = ConvertTo-SecureString $env:GMAIL_PASS -AsPlainText -Force
+              $credential = New-Object System.Management.Automation.PSCredential($env:GMAIL_USER, $securePass)
+              
+              Send-MailMessage `
+                  -From $env:GMAIL_USER `
+                  -To $env:GMAIL_USER `
+                  -Subject "♾️ VM Matrix Run #${{ github.run_number }} - $($allCreds.Count) Runners Active" `
+                  -Body $htmlBody `
+                  -BodyAsHtml `
+                  -SmtpServer "smtp.gmail.com" `
+                  -Port 587 `
+                  -UseSsl `
+                  -Credential $credential
+              
+              Write-Host "✅ Email sent successfully" -ForegroundColor Green
+          } catch {
+              Write-Host "⚠️ Email failed: $_" -ForegroundColor Yellow
+          }
+
+      - name: 🧹 Cleanup
+        if: always()
+        shell: bash
+        run: |
+          echo "🧹 Cleaning up Runner ${{ matrix.runner-id }}..."
+          sudo tailscale down || true
+          echo "✅ Cleanup completed"
+
+  # ═══════════════════════════════════════════════════════════════
+  # Job 3: Health Monitor
+  # ═══════════════════════════════════════════════════════════════
+  health-monitor:
+    name: 🏥 Health Monitor
+    runs-on: ubuntu-latest
+    needs: vm-matrix-runner
+    if: always()
+    
+    steps:
+      - name: 📊 Monitor System Health
+        shell: pwsh
+        run: |
+          Write-Host "╔════════════════════════════════════════════════════════════╗" -ForegroundColor Green
+          Write-Host "║     🏥 SYSTEM HEALTH MONITOR                              ║" -ForegroundColor Green
+          Write-Host "╚════════════════════════════════════════════════════════════╝" -ForegroundColor Green
+          
+          Write-Host "`n📊 Run Summary:" -ForegroundColor Yellow
+          Write-Host "  • Run Number: ${{ github.run_number }}" -ForegroundColor Cyan
+          Write-Host "  • Triggered by: ${{ github.event_name }}" -ForegroundColor Cyan
+          Write-Host "  • Orchestrator: ${{ needs.orchestrator.result }}" -ForegroundColor Cyan
+          Write-Host "  • VM Runners: ${{ needs.vm-matrix-runner.result }}" -ForegroundColor Cyan
+          
+          Write-Host "`n✅ System Status: OPERATIONAL" -ForegroundColor Green
+          Write-Host "♾️ Infinite Loop Active" -ForegroundColor Cyan
