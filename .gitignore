@@ -1,1 +1,58 @@
+# System & IDE
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+*.code-workspace
+.vs/
+.vsix
 
+# Logs & Temp
+logs/
+*.log
+temp/
+tmp/
+*.tmp
+cache/
+*.cache
+
+# Results & Reports
+results/
+reports/
+*.html
+*.pdf
+test-results/
+coverage/
+
+# Build
+bin/
+obj/
+dist/
+build/
+node_modules/
+packages/
+
+# Environment
+.env
+.env.local
+.env.*.local
+secrets/
+*.key
+*.pem
+*.secret
+
+# Archives
+*.zip
+*.tar
+*.gz
+*.rar
+
+# OS
+.windows
+.linux
+.macos
+Thumbs.db
+.DS_Store
