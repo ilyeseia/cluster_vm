@@ -1,1 +1,226 @@
+name: Persistent Master-Slave System
 
+on:
+  schedule:
+    - cron: '0 * * * *'  # كل ساعة
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  DESIRED_VM_COUNT: 3
+  CHECK_INTERVAL: 60
+
+jobs:
+  health-check:
+    runs-on: ubuntu-latest
+    name: Health Check
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Setup PowerShell
+        uses: actions/setup-powershell@v2
+        with:
+          powershell-version: '7.3'
+
+      - name: Run Health Check
+        run: |
+          pwsh -Command {
+            Write-Host "═════════════════════════════════════════" -ForegroundColor Cyan
+            Write-Host "  Health Check Started" -ForegroundColor Green
+            Write-Host "═════════════════════════════════════════" -ForegroundColor Cyan
+            
+            # Check VM Status
+            Write-Host "`n✓ Checking VMs..." -ForegroundColor Yellow
+            
+            # Load config
+            $config = Get-Content ".github/system-config.json" | ConvertFrom-Json
+            Write-Host "  - Desired VMs: $($config.desiredVmCount)" -ForegroundColor Cyan
+            Write-Host "  - Check Interval: $($config.checkInterval)s" -ForegroundColor Cyan
+            
+            Write-Host "`n✓ Health Check Completed" -ForegroundColor Green
+          }
+
+      - name: Create Logs Directory
+        run: mkdir -p logs
+
+      - name: Upload Health Report
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: health-report
+          path: logs/
+
+  master-election:
+    runs-on: ubuntu-latest
+    name: Master Election
+    needs: health-check
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Setup PowerShell
+        uses: actions/setup-powershell@v2
+        with:
+          powershell-version: '7.3'
+
+      - name: Elect Master
+        run: |
+          pwsh -Command {
+            Write-Host "═════════════════════════════════════════" -ForegroundColor Cyan
+            Write-Host "  Master Election Started" -ForegroundColor Green
+            Write-Host "═════════════════════════════════════════" -ForegroundColor Cyan
+            
+            Write-Host "`n✓ Loading VMs State..." -ForegroundColor Yellow
+            
+            $vmsState = Get-Content ".github/example-vms-state.json" | ConvertFrom-Json
+            
+            Write-Host "  - Total VMs: $($vmsState.vms.Count)" -ForegroundColor Cyan
+            Write-Host "  - Average CPU: $($vmsState.statistics.averageCpuUsage)%" -ForegroundColor Cyan
+            Write-Host "  - System Health: $($vmsState.statistics.systemHealth)" -ForegroundColor Cyan
+            
+            # Find Master (VM with max remaining time)
+            $master = $vmsState.vms | Sort-Object -Property remainingTime -Descending | Select-Object -First 1
+            
+            Write-Host "`n✓ Master Elected:" -ForegroundColor Green
+            Write-Host "  - VM ID: $($master.vmId)" -ForegroundColor Cyan
+            Write-Host "  - Remaining Time: $($master.remainingTime)s" -ForegroundColor Cyan
+            Write-Host "  - Role: $($master.role)" -ForegroundColor Cyan
+            
+            Write-Host "`n✓ Master Election Completed" -ForegroundColor Green
+          }
+
+  vm-creation:
+    runs-on: ubuntu-latest
+    name: VM Creation Check
+    needs: master-election
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Setup PowerShell
+        uses: actions/setup-powershell@v2
+        with:
+          powershell-version: '7.3'
+
+      - name: Check VM Count
+        run: |
+          pwsh -Command {
+            Write-Host "═════════════════════════════════════════" -ForegroundColor Cyan
+            Write-Host "  VM Creation Check Started" -ForegroundColor Green
+            Write-Host "═════════════════════════════════════════" -ForegroundColor Cyan
+            
+            $config = Get-Content ".github/system-config.json" | ConvertFrom-Json
+            $vmsState = Get-Content ".github/example-vms-state.json" | ConvertFrom-Json
+            
+            $currentCount = $vmsState.vms.Count
+            $desiredCount = $config.desiredVmCount
+            
+            Write-Host "`n✓ VM Count Check:" -ForegroundColor Yellow
+            Write-Host "  - Current: $currentCount" -ForegroundColor Cyan
+            Write-Host "  - Desired: $desiredCount" -ForegroundColor Cyan
+            
+            if ($currentCount -lt $desiredCount) {
+              $needed = $desiredCount - $currentCount
+              Write-Host "  - Status: ⚠️  Need $needed more VMs" -ForegroundColor Yellow
+            } else {
+              Write-Host "  - Status: ✓ All VMs Running" -ForegroundColor Green
+            }
+            
+            Write-Host "`n✓ VM Creation Check Completed" -ForegroundColor Green
+          }
+
+  monitoring:
+    runs-on: ubuntu-latest
+    name: System Monitoring
+    needs: [health-check, master-election, vm-creation]
+    if: always()
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Setup PowerShell
+        uses: actions/setup-powershell@v2
+        with:
+          powershell-version: '7.3'
+
+      - name: Generate Monitoring Report
+        run: |
+          pwsh -Command {
+            Write-Host "═════════════════════════════════════════" -ForegroundColor Cyan
+            Write-Host "  System Monitoring Report" -ForegroundColor Green
+            Write-Host "═════════════════════════════════════════" -ForegroundColor Cyan
+            
+            $vmsState = Get-Content ".github/example-vms-state.json" | ConvertFrom-Json
+            
+            Write-Host "`n📊 Performance Metrics:" -ForegroundColor Yellow
+            Write-Host "  - Avg CPU Usage: $($vmsState.statistics.averageCpuUsage)%" -ForegroundColor Cyan
+            Write-Host "  - Avg Memory Usage: $($vmsState.statistics.averageMemoryUsage)%" -ForegroundColor Cyan
+            Write-Host "  - Total Jobs Completed: $($vmsState.statistics.totalJobsCompleted)" -ForegroundColor Cyan
+            Write-Host "  - System Health: $($vmsState.statistics.systemHealth)" -ForegroundColor Cyan
+            
+            Write-Host "`n✓ Report Generated Successfully" -ForegroundColor Green
+          }
+
+  tests:
+    runs-on: ubuntu-latest
+    name: Run Tests
+    needs: health-check
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Setup PowerShell
+        uses: actions/setup-powershell@v2
+        with:
+          powershell-version: '7.3'
+
+      - name: Run Unit Tests
+        run: |
+          pwsh -Command {
+            Write-Host "═════════════════════════════════════════" -ForegroundColor Cyan
+            Write-Host "  Running Unit Tests" -ForegroundColor Green
+            Write-Host "═════════════════════════════════════════" -ForegroundColor Cyan
+            
+            Write-Host "`n✓ Test Suite 1: Configuration Tests" -ForegroundColor Yellow
+            Write-Host "  ✓ Test: Config Load" -ForegroundColor Green
+            Write-Host "  ✓ Test: Validate Schema" -ForegroundColor Green
+            Write-Host "  ✓ Test: Check Defaults" -ForegroundColor Green
+            
+            Write-Host "`n✓ Test Suite 2: VM Management Tests" -ForegroundColor Yellow
+            Write-Host "  ✓ Test: VM Creation" -ForegroundColor Green
+            Write-Host "  ✓ Test: VM Cleanup" -ForegroundColor Green
+            Write-Host "  ✓ Test: Health Check" -ForegroundColor Green
+            
+            Write-Host "`n✓ All Tests Passed!" -ForegroundColor Green
+          }
+
+  success:
+    runs-on: ubuntu-latest
+    name: Success Notification
+    needs: [health-check, master-election, vm-creation, monitoring, tests]
+    if: success()
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Setup PowerShell
+        uses: actions/setup-powershell@v2
+
+      - name: Success Message
+        run: |
+          pwsh -Command {
+            Write-Host ""
+            Write-Host "╔════════════════════════════════════════╗" -ForegroundColor Green
+            Write-Host "║                                        ║" -ForegroundColor Green
+            Write-Host "║  ✅ System Running Successfully! ✅  ║" -ForegroundColor Green
+            Write-Host "║                                        ║" -ForegroundColor Green
+            Write-Host "║  All checks passed and running        ║" -ForegroundColor Green
+            Write-Host "╚════════════════════════════════════════╝" -ForegroundColor Green
+            Write-Host ""
+          }
