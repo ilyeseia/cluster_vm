@@ -2,7 +2,7 @@ name: 🔄 Persistent Master-Slave System
 
 on:
   schedule:
-    - cron: '0 * * * *'  # كل ساعة
+    - cron: '0 * * * *'
   workflow_dispatch:
     inputs:
       action:
@@ -32,9 +32,6 @@ env:
   POWERSHELL_VERSION: '7.4.0'
 
 jobs:
-  # ═══════════════════════════════════════════════════════════════
-  # Job 1: Health Check & Validation
-  # ═══════════════════════════════════════════════════════════════
   health-check:
     name: 🏥 Health Check & Validation
     runs-on: ubuntu-latest
@@ -52,7 +49,6 @@ jobs:
       - name: 🔧 Setup PowerShell
         shell: bash
         run: |
-          # تثبيت PowerShell 7
           wget -q https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/packages-microsoft-prod.deb
           sudo dpkg -i packages-microsoft-prod.deb
           sudo apt-get update
@@ -67,7 +63,6 @@ jobs:
           Write-Host "║     🏥 SYSTEM HEALTH CHECK                      ║" -ForegroundColor Cyan
           Write-Host "╚══════════════════════════════════════════════════╝" -ForegroundColor Cyan
           
-          # تحميل الإعدادات
           if (Test-Path '.github/system-config.json') {
               $config = Get-Content '.github/system-config.json' | ConvertFrom-Json
               Write-Host "✓ Config Loaded: Version $($config.version)" -ForegroundColor Green
@@ -84,7 +79,6 @@ jobs:
               exit 1
           }
           
-          # التحقق من صحة الـ VMs
           $healthyVMs = 0
           foreach ($vm in $vmsState.vms) {
               if ($vm.status -eq "running") {
@@ -97,7 +91,6 @@ jobs:
           Write-Host "  • Healthy VMs: $healthyVMs" -ForegroundColor Green
           Write-Host "  • System Health: $($vmsState.statistics.systemHealth)" -ForegroundColor Green
           
-          # تصدير النتائج
           "status=healthy" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "count=$($vmsState.vms.Count)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
@@ -114,19 +107,15 @@ jobs:
       - name: 📊 Create Health Report
         shell: pwsh
         run: |
-          # إنشاء مجلدات إذا لم تكن موجودة
           New-Item -ItemType Directory -Path "logs", "results" -Force | Out-Null
           
-          # إنشاء تقرير صحة
           $report = @{
               timestamp = Get-Date -Format 'o'
               status = "healthy"
-              vmCount = ${{ steps.health.outputs.count }}
+              vmCount = [int]"${{ steps.health.outputs.count }}"
           }
           
           $report | ConvertTo-Json | Out-File "results/health-report.json"
-          
-          # إنشاء ملف log
           "Health check completed at $(Get-Date)" | Out-File "logs/health-check.log"
 
       - name: 📤 Upload Health Report
@@ -140,9 +129,6 @@ jobs:
           retention-days: 7
           if-no-files-found: warn
 
-  # ═══════════════════════════════════════════════════════════════
-  # Job 2: VM Lifecycle Management
-  # ═══════════════════════════════════════════════════════════════
   vm-lifecycle:
     name: 🖥️ VM Lifecycle Management
     runs-on: ubuntu-latest
@@ -183,24 +169,32 @@ jobs:
           
           "current=$currentCount" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "desired=$desiredCount" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          "needs-action=$($currentCount -ne $desiredCount)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          $needsAction = if ($currentCount -ne $desiredCount) { "true" } else { "false" }
+          "needs-action=$needsAction" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
       - name: ⚙️ VM Operations
         shell: pwsh
         run: |
           Write-Host "`n⚙️ Performing VM Operations..." -ForegroundColor Yellow
           
-          # إنشاء تقرير العمليات
           New-Item -ItemType Directory -Path "results" -Force | Out-Null
+          
+          # تحويل القيم بشكل صحيح
+          $currentVMs = [int]"${{ steps.check-vms.outputs.current }}"
+          $desiredVMs = [int]"${{ steps.check-vms.outputs.desired }}"
+          $needsActionStr = "${{ steps.check-vms.outputs.needs-action }}"
+          $needsAction = if ($needsActionStr -eq "true") { $true } else { $false }
           
           $report = @{
               timestamp = Get-Date -Format 'o'
-              currentVMs = ${{ steps.check-vms.outputs.current }}
-              desiredVMs = ${{ steps.check-vms.outputs.desired }}
-              needsAction = ${{ steps.check-vms.outputs.needs-action }}
+              currentVMs = $currentVMs
+              desiredVMs = $desiredVMs
+              needsAction = $needsAction
           }
           
           $report | ConvertTo-Json | Out-File "results/vm-lifecycle-report.json"
+          
+          Write-Host "✓ VM operations report created" -ForegroundColor Green
 
       - name: 💾 Update VM State
         shell: pwsh
@@ -224,9 +218,6 @@ jobs:
           retention-days: 30
           if-no-files-found: warn
 
-  # ═══════════════════════════════════════════════════════════════
-  # Job 3: Master Election
-  # ═══════════════════════════════════════════════════════════════
   master-election:
     name: 👑 Master Election
     runs-on: ubuntu-latest
@@ -262,7 +253,6 @@ jobs:
               Write-Host "  • CPU: $($master.performance.cpuUsage)%" -ForegroundColor Yellow
               Write-Host "  • Memory: $($master.performance.memoryUsage)%" -ForegroundColor Yellow
               
-              # إنشاء تقرير
               New-Item -ItemType Directory -Path "results" -Force | Out-Null
               $master | ConvertTo-Json | Out-File "results/master-status.json"
           } else {
@@ -278,9 +268,6 @@ jobs:
           retention-days: 30
           if-no-files-found: warn
 
-  # ═══════════════════════════════════════════════════════════════
-  # Job 4: Monitoring
-  # ═══════════════════════════════════════════════════════════════
   monitoring:
     name: 📊 System Monitoring
     runs-on: ubuntu-latest
@@ -308,7 +295,6 @@ jobs:
           
           $vmsState = Get-Content '.github/example-vms-state.json' | ConvertFrom-Json
           
-          # جمع المقاييس
           $metrics = @{
               timestamp = Get-Date -Format 'o'
               totalVMs = $vmsState.vms.Count
@@ -326,7 +312,6 @@ jobs:
           Write-Host "  • Avg Memory: $($metrics.avgMemory)%" -ForegroundColor Yellow
           Write-Host "  • System Health: $($metrics.systemHealth)" -ForegroundColor Green
           
-          # حفظ التقرير
           New-Item -ItemType Directory -Path "results" -Force | Out-Null
           $metrics | ConvertTo-Json | Out-File "results/monitoring-metrics.json"
 
@@ -339,9 +324,6 @@ jobs:
           retention-days: 30
           if-no-files-found: warn
 
-  # ═══════════════════════════════════════════════════════════════
-  # Job 5: Testing
-  # ═══════════════════════════════════════════════════════════════
   testing:
     name: 🧪 Testing (${{ matrix.test-type }})
     runs-on: ubuntu-latest
@@ -372,10 +354,8 @@ jobs:
           Write-Host "║     🧪 RUNNING $($testType.ToUpper()) TESTS            ║" -ForegroundColor Yellow
           Write-Host "╚══════════════════════════════════════════════════╝" -ForegroundColor Yellow
           
-          # إنشاء مجلدات
           New-Item -ItemType Directory -Path "results" -Force | Out-Null
           
-          # محاكاة الاختبارات
           $testResults = @{
               testType = $testType
               timestamp = Get-Date -Format 'o'
@@ -390,7 +370,6 @@ jobs:
           Write-Host "  • Passed: $($testResults.testsPassed)" -ForegroundColor Green
           Write-Host "  • Failed: $($testResults.testsFailed)" -ForegroundColor Red
           
-          # حفظ النتائج
           $testResults | ConvertTo-Json | Out-File "results/test-$testType-results.json"
 
       - name: 📤 Upload Test Results
@@ -402,9 +381,6 @@ jobs:
           retention-days: 30
           if-no-files-found: warn
 
-  # ═══════════════════════════════════════════════════════════════
-  # Job 6: Backup
-  # ═══════════════════════════════════════════════════════════════
   backup:
     name: 💾 System Backup
     runs-on: ubuntu-latest
@@ -431,10 +407,8 @@ jobs:
           Write-Host "║     💾 SYSTEM BACKUP                            ║" -ForegroundColor Cyan
           Write-Host "╚══════════════════════════════════════════════════╝" -ForegroundColor Cyan
           
-          # إنشاء مجلد النسخ الاحتياطية
           New-Item -ItemType Directory -Path "backups" -Force | Out-Null
           
-          # نسخ الملفات المهمة
           $backupId = "backup-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
           $backupPath = "backups/$backupId"
           New-Item -ItemType Directory -Path $backupPath -Force | Out-Null
@@ -442,7 +416,6 @@ jobs:
           Copy-Item ".github/system-config.json" "$backupPath/" -Force
           Copy-Item ".github/example-vms-state.json" "$backupPath/" -Force
           
-          # إنشاء metadata
           $metadata = @{
               backupId = $backupId
               timestamp = Get-Date -Format 'o'
@@ -461,9 +434,6 @@ jobs:
           retention-days: 90
           compression-level: 9
 
-  # ═══════════════════════════════════════════════════════════════
-  # Job 7: Summary
-  # ═══════════════════════════════════════════════════════════════
   summary:
     name: 📋 Workflow Summary
     runs-on: ubuntu-latest
@@ -481,12 +451,12 @@ jobs:
           Write-Host "╚════════════════════════════════════════════════════════════╝" -ForegroundColor Green
           
           Write-Host "`n📊 Job Results:" -ForegroundColor Yellow
-          Write-Host "  • Health Check: ${{ needs.health-check.result }}" -ForegroundColor $(if("${{ needs.health-check.result }}" -eq "success"){"Green"}else{"Red"})
-          Write-Host "  • VM Lifecycle: ${{ needs.vm-lifecycle.result }}" -ForegroundColor $(if("${{ needs.vm-lifecycle.result }}" -eq "success"){"Green"}else{"Red"})
-          Write-Host "  • Master Election: ${{ needs.master-election.result }}" -ForegroundColor $(if("${{ needs.master-election.result }}" -eq "success"){"Green"}else{"Red"})
-          Write-Host "  • Monitoring: ${{ needs.monitoring.result }}" -ForegroundColor $(if("${{ needs.monitoring.result }}" -eq "success"){"Green"}else{"Red"})
-          Write-Host "  • Testing: ${{ needs.testing.result }}" -ForegroundColor $(if("${{ needs.testing.result }}" -eq "success"){"Green"}else{"Red"})
-          Write-Host "  • Backup: ${{ needs.backup.result }}" -ForegroundColor $(if("${{ needs.backup.result }}" -eq "success"){"Green"}else{"Red"})
+          Write-Host "  • Health Check: ${{ needs.health-check.result }}" -ForegroundColor Cyan
+          Write-Host "  • VM Lifecycle: ${{ needs.vm-lifecycle.result }}" -ForegroundColor Cyan
+          Write-Host "  • Master Election: ${{ needs.master-election.result }}" -ForegroundColor Cyan
+          Write-Host "  • Monitoring: ${{ needs.monitoring.result }}" -ForegroundColor Cyan
+          Write-Host "  • Testing: ${{ needs.testing.result }}" -ForegroundColor Cyan
+          Write-Host "  • Backup: ${{ needs.backup.result }}" -ForegroundColor Cyan
           
           Write-Host "`n✨ Workflow completed at: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" -ForegroundColor Cyan
 
