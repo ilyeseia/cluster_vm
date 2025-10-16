@@ -1,1 +1,72 @@
-
+{
+  "vms": [
+    {
+      "vmId": "vm-20240115-120000-abc123",
+      "createdAt": "2024-01-15T10:00:00Z",
+      "status": "running",
+      "role": "master",
+      "remainingTime": 260,
+      "jobsCompleted": 8,
+      "lastHeartbeat": "2024-01-15T11:58:00Z",
+      "performance": {
+        "cpuUsage": 65.5,
+        "memoryUsage": 72.3,
+        "diskUsage": 45.0,
+        "networkUsage": 23.5
+      },
+      "tags": {
+        "environment": "production",
+        "region": "us-east-1",
+        "tier": "master"
+      }
+    },
+    {
+      "vmId": "vm-20240115-120200-def456",
+      "createdAt": "2024-01-15T10:02:00Z",
+      "status": "running",
+      "role": "worker",
+      "remainingTime": 258,
+      "jobsCompleted": 5,
+      "lastHeartbeat": "2024-01-15T11:59:00Z",
+      "performance": {
+        "cpuUsage": 52.3,
+        "memoryUsage": 61.5,
+        "diskUsage": 38.0,
+        "networkUsage": 18.2
+      },
+      "tags": {
+        "environment": "production",
+        "region": "us-east-1",
+        "tier": "worker"
+      }
+    },
+    {
+      "vmId": "vm-20240115-120400-ghi789",
+      "createdAt": "2024-01-15T10:04:00Z",
+      "status": "running",
+      "role": "worker",
+      "remainingTime": 256,
+      "jobsCompleted": 3,
+      "lastHeartbeat": "2024-01-15T11:59:30Z",
+      "performance": {
+        "cpuUsage": 48.7,
+        "memoryUsage": 58.2,
+        "diskUsage": 42.0,
+        "networkUsage": 15.7
+      },
+      "tags": {
+        "environment": "production",
+        "region": "us-east-1",
+        "tier": "worker"
+      }
+    }
+  ],
+  "lastCheck": "2024-01-15T12:00:00Z",
+  "totalVmsCreated": 3,
+  "statistics": {
+    "averageCpuUsage": 55.5,
+    "averageMemoryUsage": 64.0,
+    "totalJobsCompleted": 16,
+    "systemHealth": "excellent"
+  }
+}
