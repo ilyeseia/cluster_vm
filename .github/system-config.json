@@ -1,29 +1,163 @@
 {
-  "desiredVmCount": 3,
-  "vmCreationInterval": 120,
-  "vmLifetime": 360,
-  "checkInterval": 60,
-  "masterElectionStrategy": "max-remaining-time",
-  "healthCheckInterval": 30,
-  "maxJobsPerVM": 10,
-  "maxConcurrentJobs": 3,
-  "createdAt": "2024-01-15T10:00:00Z",
   "version": "1.0.0",
-  "features": {
-    "autoCreation": true,
-    "autoElection": true,
-    "monitoring": true,
-    "alerts": true,
-    "reporting": true
+  "systemName": "Persistent Master-Slave System",
+  "description": "Advanced VM cluster management with dynamic master election",
+  
+  "vmConfig": {
+    "desiredVmCount": 3,
+    "minVmCount": 2,
+    "maxVmCount": 10,
+    "vmCreationInterval": 120,
+    "vmLifetime": 360,
+    "vmStartupTime": 30,
+    "vmShutdownTime": 15
   },
+  
+  "masterElection": {
+    "strategy": "max-remaining-time",
+    "electionInterval": 3600,
+    "weights": {
+      "remainingTime": 0.5,
+      "cpuUsage": 0.3,
+      "memoryUsage": 0.2
+    },
+    "failoverEnabled": true,
+    "failoverTimeout": 30
+  },
+  
+  "healthCheck": {
+    "enabled": true,
+    "interval": 30,
+    "timeout": 10,
+    "retries": 3,
+    "endpoints": [
+      "/health",
+      "/status",
+      "/ready"
+    ]
+  },
+  
+  "monitoring": {
+    "enabled": true,
+    "realtimeEnabled": true,
+    "metricsInterval": 10,
+    "metricsRetention": 604800,
+    "dashboardEnabled": true,
+    "dashboardPort": 8080
+  },
+  
+  "alerting": {
+    "enabled": true,
+    "channels": {
+      "email": {
+        "enabled": true,
+        "recipients": ["admin@example.com"],
+        "smtpServer": "smtp.example.com",
+        "smtpPort": 587
+      },
+      "slack": {
+        "enabled": true,
+        "webhook": "https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
+      },
+      "teams": {
+        "enabled": false,
+        "webhook": ""
+      }
+    },
+    "thresholds": {
+      "cpu": {
+        "warning": 75,
+        "critical": 90
+      },
+      "memory": {
+        "warning": 80,
+        "critical": 95
+      },
+      "disk": {
+        "warning": 85,
+        "critical": 95
+      },
+      "responseTime": {
+        "warning": 1000,
+        "critical": 3000
+      }
+    }
+  },
+  
+  "jobManagement": {
+    "maxJobsPerVM": 10,
+    "maxConcurrentJobs": 3,
+    "jobTimeout": 600,
+    "jobRetries": 3,
+    "jobRetryDelay": 5,
+    "queueEnabled": true,
+    "queueMaxSize": 1000,
+    "priorityLevels": ["critical", "high", "medium", "low"]
+  },
+  
+  "backup": {
+    "enabled": true,
+    "interval": 3600,
+    "retention": 604800,
+    "location": "backups/",
+    "compression": true,
+    "encryption": false
+  },
+  
+  "logging": {
+    "level": "INFO",
+    "format": "json",
+    "destination": "logs/",
+    "maxSize": 10485760,
+    "maxFiles": 10,
+    "compress": true
+  },
+  
+  "security": {
+    "encryption": true,
+    "tlsVersion": "1.3",
+    "certificatePath": "certs/",
+    "validateCertificates": true,
+    "apiKeys": {
+      "enabled": true,
+      "rotationInterval": 2592000
+    },
+    "rateLimiting": {
+      "enabled": true,
+      "maxRequests": 100,
+      "windowSeconds": 60
+    }
+  },
+  
   "performance": {
-    "timeout": 600,
-    "retryCount": 3,
-    "retryDelay": 5
+    "cacheEnabled": true,
+    "cacheSize": 1024,
+    "cacheTTL": 300,
+    "connectionPoolSize": 10,
+    "connectionTimeout": 30000,
+    "readTimeout": 30000,
+    "writeTimeout": 30000
   },
-  "thresholds": {
-    "cpuUsage": 80,
-    "memoryUsage": 85,
-    "diskUsage": 90
+  
+  "features": {
+    "autoScaling": true,
+    "autoHealing": true,
+    "autoBackup": true,
+    "autoReporting": true,
+    "advancedMonitoring": true,
+    "predictiveAnalytics": false,
+    "aiOptimization": false
+  },
+  
+  "maintenance": {
+    "enabled": true,
+    "schedule": "0 2 * * *",
+    "duration": 1800,
+    "tasks": [
+      "cleanup",
+      "optimization",
+      "backup",
+      "health-check"
+    ]
   }
 }
