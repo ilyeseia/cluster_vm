@@ -1,226 +1,390 @@
-name: Persistent Master-Slave System
+name: 🔄 Persistent Master-Slave System
 
 on:
   schedule:
     - cron: '0 * * * *'  # كل ساعة
   workflow_dispatch:
+    inputs:
+      action:
+        description: 'Action to perform'
+        required: true
+        default: 'full-cycle'
+        type: choice
+        options:
+          - full-cycle
+          - health-check
+          - master-election
+          - vm-creation
+          - cleanup
+      vm-count:
+        description: 'Number of VMs to maintain'
+        required: false
+        default: '3'
   push:
-    branches: [main]
+    branches: [ main, develop ]
   pull_request:
-    branches: [main]
+    branches: [ main ]
 
 env:
   DESIRED_VM_COUNT: 3
+  VM_LIFETIME: 360
   CHECK_INTERVAL: 60
+  POWERSHELL_VERSION: '7.4.0'
 
 jobs:
+  # ═══════════════════════════════════════════════════════════════
+  # Job 1: Health Check & Validation
+  # ═══════════════════════════════════════════════════════════════
   health-check:
+    name: 🏥 Health Check & Validation
     runs-on: ubuntu-latest
-    name: Health Check
+    timeout-minutes: 10
+    outputs:
+      health-status: ${{ steps.health.outputs.status }}
+      vm-count: ${{ steps.health.outputs.count }}
+    
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v3
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Setup PowerShell
-        uses: actions/setup-powershell@v2
+      - name: 🔧 Setup PowerShell
+        uses: azure/powershell@v1
         with:
-          powershell-version: '7.3'
+          azPSVersion: 'latest'
+          inlineScript: |
+            $PSVersionTable
 
-      - name: Run Health Check
+      - name: 📊 System Health Check
+        id: health
+        shell: pwsh
         run: |
-          pwsh -Command {
-            Write-Host "═════════════════════════════════════════" -ForegroundColor Cyan
-            Write-Host "  Health Check Started" -ForegroundColor Green
-            Write-Host "═════════════════════════════════════════" -ForegroundColor Cyan
-            
-            # Check VM Status
-            Write-Host "`n✓ Checking VMs..." -ForegroundColor Yellow
-            
-            # Load config
-            $config = Get-Content ".github/system-config.json" | ConvertFrom-Json
-            Write-Host "  - Desired VMs: $($config.desiredVmCount)" -ForegroundColor Cyan
-            Write-Host "  - Check Interval: $($config.checkInterval)s" -ForegroundColor Cyan
-            
-            Write-Host "`n✓ Health Check Completed" -ForegroundColor Green
+          Write-Host "╔══════════════════════════════════════════════════╗" -ForegroundColor Cyan
+          Write-Host "║     🏥 SYSTEM HEALTH CHECK                      ║" -ForegroundColor Cyan
+          Write-Host "╚══════════════════════════════════════════════════╝" -ForegroundColor Cyan
+          
+          # تحميل الإعدادات
+          $config = Get-Content '.github/system-config.json' | ConvertFrom-Json
+          $vmsState = Get-Content '.github/example-vms-state.json' | ConvertFrom-Json
+          
+          Write-Host "`n✓ Config Loaded: Version $($config.version)" -ForegroundColor Green
+          Write-Host "✓ Current VMs: $($vmsState.vms.Count)" -ForegroundColor Green
+          Write-Host "✓ Desired VMs: $($config.desiredVmCount)" -ForegroundColor Green
+          
+          # التحقق من صحة الـ VMs
+          $healthyVMs = 0
+          foreach ($vm in $vmsState.vms) {
+              if ($vm.status -eq "running") {
+                  $healthyVMs++
+              }
           }
+          
+          Write-Host "`n📊 Health Summary:" -ForegroundColor Yellow
+          Write-Host "  • Total VMs: $($vmsState.vms.Count)" -ForegroundColor Cyan
+          Write-Host "  • Healthy VMs: $healthyVMs" -ForegroundColor Green
+          Write-Host "  • System Health: $($vmsState.statistics.systemHealth)" -ForegroundColor Green
+          
+          # تصدير النتائج
+          echo "status=healthy" >> $GITHUB_OUTPUT
+          echo "count=$($vmsState.vms.Count)" >> $GITHUB_OUTPUT
 
-      - name: Create Logs Directory
-        run: mkdir -p logs
+      - name: 🧪 Run Quick Tests
+        shell: pwsh
+        run: |
+          Write-Host "`n🧪 Running Quick Tests..." -ForegroundColor Yellow
+          pwsh -File tests/unit-tests.ps1 -TestCategory config -Quick
 
-      - name: Upload Health Report
-        if: always()
+      - name: 📤 Upload Health Report
         uses: actions/upload-artifact@v3
         with:
           name: health-report
-          path: logs/
+          path: |
+            logs/health-*.log
+            results/health-*.json
+          retention-days: 7
 
+  # ═══════════════════════════════════════════════════════════════
+  # Job 2: VM Lifecycle Management
+  # ═══════════════════════════════════════════════════════════════
+  vm-lifecycle:
+    name: 🖥️ VM Lifecycle Management
+    runs-on: ubuntu-latest
+    needs: health-check
+    timeout-minutes: 15
+    if: needs.health-check.outputs.health-status == 'healthy'
+    
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup PowerShell 7
+        shell: bash
+        run: |
+          # تثبيت PowerShell 7 على Ubuntu
+          wget -q https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/packages-microsoft-prod.deb
+          sudo dpkg -i packages-microsoft-prod.deb
+          sudo apt-get update
+          sudo apt-get install -y powershell
+
+      - name: 🔍 Check Current VMs
+        id: check-vms
+        shell: pwsh
+        run: |
+          Write-Host "╔══════════════════════════════════════════════════╗" -ForegroundColor Cyan
+          Write-Host "║     🖥️  VM LIFECYCLE MANAGEMENT                ║" -ForegroundColor Cyan
+          Write-Host "╚══════════════════════════════════════════════════╝" -ForegroundColor Cyan
+          
+          $vmsState = Get-Content '.github/example-vms-state.json' | ConvertFrom-Json
+          $config = Get-Content '.github/system-config.json' | ConvertFrom-Json
+          
+          $currentCount = $vmsState.vms.Count
+          $desiredCount = $config.desiredVmCount
+          
+          Write-Host "`n📊 VM Status:" -ForegroundColor Yellow
+          Write-Host "  • Current: $currentCount" -ForegroundColor Cyan
+          Write-Host "  • Desired: $desiredCount" -ForegroundColor Green
+          Write-Host "  • Difference: $($desiredCount - $currentCount)" -ForegroundColor $(if($desiredCount -eq $currentCount){'Green'}else{'Yellow'})
+          
+          echo "current=$currentCount" >> $GITHUB_OUTPUT
+          echo "desired=$desiredCount" >> $GITHUB_OUTPUT
+          echo "needs-action=$($currentCount -ne $desiredCount)" >> $GITHUB_OUTPUT
+
+      - name: ➕ Create New VMs
+        if: steps.check-vms.outputs.needs-action == 'true'
+        shell: pwsh
+        run: |
+          Write-Host "`n➕ Creating New VMs..." -ForegroundColor Yellow
+          pwsh -File scripts/vm-lifecycle-manager.ps1 -Action create -Count 1
+
+      - name: 🗑️ Cleanup Expired VMs
+        shell: pwsh
+        run: |
+          Write-Host "`n🗑️ Cleaning Up Expired VMs..." -ForegroundColor Yellow
+          pwsh -File scripts/vm-lifecycle-manager.ps1 -Action cleanup
+
+      - name: 💾 Update VM State
+        shell: pwsh
+        run: |
+          Write-Host "`n💾 Updating VM State..." -ForegroundColor Yellow
+          
+          $timestamp = Get-Date -Format 'yyyy-MM-ddTHH:mm:ssZ'
+          $vmsState = Get-Content '.github/example-vms-state.json' | ConvertFrom-Json
+          $vmsState.lastUpdated = $timestamp
+          
+          $vmsState | ConvertTo-Json -Depth 10 | Set-Content '.github/example-vms-state.json'
+          
+          Write-Host "✓ State Updated: $timestamp" -ForegroundColor Green
+
+      - name: 📊 Generate VM Report
+        shell: pwsh
+        run: |
+          $report = @"
+          VM Lifecycle Report
+          ==================
+          Timestamp: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
+          Current VMs: ${{ steps.check-vms.outputs.current }}
+          Desired VMs: ${{ steps.check-vms.outputs.desired }}
+          Action Required: ${{ steps.check-vms.outputs.needs-action }}
+          "@
+          
+          $report | Out-File -FilePath "results/vm-lifecycle-report.txt"
+          Write-Host $report
+
+  # ═══════════════════════════════════════════════════════════════
+  # Job 3: Master Election
+  # ═══════════════════════════════════════════════════════════════
   master-election:
+    name: 👑 Master Election & Load Balancing
     runs-on: ubuntu-latest
-    name: Master Election
-    needs: health-check
+    needs: [health-check, vm-lifecycle]
+    timeout-minutes: 10
+    
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v3
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
 
-      - name: Setup PowerShell
-        uses: actions/setup-powershell@v2
-        with:
-          powershell-version: '7.3'
-
-      - name: Elect Master
+      - name: 👑 Elect New Master
+        shell: pwsh
         run: |
-          pwsh -Command {
-            Write-Host "═════════════════════════════════════════" -ForegroundColor Cyan
-            Write-Host "  Master Election Started" -ForegroundColor Green
-            Write-Host "═════════════════════════════════════════" -ForegroundColor Cyan
-            
-            Write-Host "`n✓ Loading VMs State..." -ForegroundColor Yellow
-            
-            $vmsState = Get-Content ".github/example-vms-state.json" | ConvertFrom-Json
-            
-            Write-Host "  - Total VMs: $($vmsState.vms.Count)" -ForegroundColor Cyan
-            Write-Host "  - Average CPU: $($vmsState.statistics.averageCpuUsage)%" -ForegroundColor Cyan
-            Write-Host "  - System Health: $($vmsState.statistics.systemHealth)" -ForegroundColor Cyan
-            
-            # Find Master (VM with max remaining time)
-            $master = $vmsState.vms | Sort-Object -Property remainingTime -Descending | Select-Object -First 1
-            
-            Write-Host "`n✓ Master Elected:" -ForegroundColor Green
-            Write-Host "  - VM ID: $($master.vmId)" -ForegroundColor Cyan
-            Write-Host "  - Remaining Time: $($master.remainingTime)s" -ForegroundColor Cyan
-            Write-Host "  - Role: $($master.role)" -ForegroundColor Cyan
-            
-            Write-Host "`n✓ Master Election Completed" -ForegroundColor Green
-          }
+          Write-Host "╔══════════════════════════════════════════════════╗" -ForegroundColor Magenta
+          Write-Host "║     👑 MASTER ELECTION ENGINE                   ║" -ForegroundColor Magenta
+          Write-Host "╚══════════════════════════════════════════════════╝" -ForegroundColor Magenta
+          
+          pwsh -File scripts/master-election-engine.ps1 -Action elect
 
-  vm-creation:
-    runs-on: ubuntu-latest
-    name: VM Creation Check
-    needs: master-election
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v3
-
-      - name: Setup PowerShell
-        uses: actions/setup-powershell@v2
-        with:
-          powershell-version: '7.3'
-
-      - name: Check VM Count
+      - name: ⚖️ Load Balancing
+        shell: pwsh
         run: |
-          pwsh -Command {
-            Write-Host "═════════════════════════════════════════" -ForegroundColor Cyan
-            Write-Host "  VM Creation Check Started" -ForegroundColor Green
-            Write-Host "═════════════════════════════════════════" -ForegroundColor Cyan
-            
-            $config = Get-Content ".github/system-config.json" | ConvertFrom-Json
-            $vmsState = Get-Content ".github/example-vms-state.json" | ConvertFrom-Json
-            
-            $currentCount = $vmsState.vms.Count
-            $desiredCount = $config.desiredVmCount
-            
-            Write-Host "`n✓ VM Count Check:" -ForegroundColor Yellow
-            Write-Host "  - Current: $currentCount" -ForegroundColor Cyan
-            Write-Host "  - Desired: $desiredCount" -ForegroundColor Cyan
-            
-            if ($currentCount -lt $desiredCount) {
-              $needed = $desiredCount - $currentCount
-              Write-Host "  - Status: ⚠️  Need $needed more VMs" -ForegroundColor Yellow
-            } else {
-              Write-Host "  - Status: ✓ All VMs Running" -ForegroundColor Green
-            }
-            
-            Write-Host "`n✓ VM Creation Check Completed" -ForegroundColor Green
-          }
+          Write-Host "`n⚖️ Performing Load Balancing..." -ForegroundColor Yellow
+          pwsh -File scripts/job-distribution-manager.ps1 -Action balance
 
+      - name: 📊 Election Summary
+        shell: pwsh
+        run: |
+          $vmsState = Get-Content '.github/example-vms-state.json' | ConvertFrom-Json
+          $master = $vmsState.vms | Where-Object { $_.role -eq "master" } | Select-Object -First 1
+          
+          Write-Host "`n👑 Election Results:" -ForegroundColor Green
+          Write-Host "  • Master VM: $($master.vmId)" -ForegroundColor Cyan
+          Write-Host "  • CPU Usage: $($master.performance.cpuUsage)%" -ForegroundColor Yellow
+          Write-Host "  • Memory: $($master.performance.memoryUsage)%" -ForegroundColor Yellow
+          Write-Host "  • Remaining Time: $($master.remainingTime)s" -ForegroundColor Cyan
+
+  # ═══════════════════════════════════════════════════════════════
+  # Job 4: Monitoring & Alerting
+  # ═══════════════════════════════════════════════════════════════
   monitoring:
+    name: 📊 Real-time Monitoring & Alerts
     runs-on: ubuntu-latest
-    name: System Monitoring
-    needs: [health-check, master-election, vm-creation]
+    needs: [health-check, vm-lifecycle, master-election]
+    timeout-minutes: 10
+    
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+
+      - name: 📊 Collect Metrics
+        shell: pwsh
+        run: |
+          Write-Host "╔══════════════════════════════════════════════════╗" -ForegroundColor Cyan
+          Write-Host "║     📊 MONITORING & METRICS                     ║" -ForegroundColor Cyan
+          Write-Host "╚══════════════════════════════════════════════════╝" -ForegroundColor Cyan
+          
+          pwsh -File monitoring/metrics-collector.ps1
+
+      - name: 🚨 Check Alerts
+        shell: pwsh
+        run: |
+          Write-Host "`n🚨 Checking Alert Conditions..." -ForegroundColor Yellow
+          pwsh -File monitoring/alerting-system.ps1
+
+      - name: 📈 Generate Dashboard
+        shell: pwsh
+        run: |
+          Write-Host "`n📈 Generating Dashboard..." -ForegroundColor Yellow
+          pwsh -File monitoring/real-time-dashboard.ps1
+
+      - name: 📧 Send Reports
+        if: always()
+        shell: pwsh
+        run: |
+          Write-Host "`n📧 Generating Reports..." -ForegroundColor Yellow
+          pwsh -File monitoring/report-generator.ps1
+
+  # ═══════════════════════════════════════════════════════════════
+  # Job 5: Testing & Validation
+  # ═══════════════════════════════════════════════════════════════
+  testing:
+    name: 🧪 Comprehensive Testing
+    runs-on: ubuntu-latest
+    needs: monitoring
+    timeout-minutes: 20
+    strategy:
+      matrix:
+        test-type: [unit, integration, security, load]
+    
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+
+      - name: 🧪 Run ${{ matrix.test-type }} Tests
+        shell: pwsh
+        run: |
+          Write-Host "╔══════════════════════════════════════════════════╗" -ForegroundColor Yellow
+          Write-Host "║     🧪 RUNNING ${{ matrix.test-type | upper }} TESTS" -ForegroundColor Yellow
+          Write-Host "╚══════════════════════════════════════════════════╝" -ForegroundColor Yellow
+          
+          switch ("${{ matrix.test-type }}") {
+              "unit" { pwsh -File tests/unit-tests.ps1 -TestCategory all }
+              "integration" { pwsh -File tests/integration-tests.ps1 }
+              "security" { pwsh -File tests/security-tests.ps1 }
+              "load" { pwsh -File tests/load-tests.ps1 }
+          }
+
+      - name: 📊 Test Results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: test-results-${{ matrix.test-type }}
+          path: |
+            results/test-*.xml
+            results/test-*.html
+          retention-days: 30
+
+  # ═══════════════════════════════════════════════════════════════
+  # Job 6: Backup & Cleanup
+  # ═══════════════════════════════════════════════════════════════
+  backup-cleanup:
+    name: 💾 Backup & System Cleanup
+    runs-on: ubuntu-latest
+    needs: testing
     if: always()
+    timeout-minutes: 10
+    
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v3
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
 
-      - name: Setup PowerShell
-        uses: actions/setup-powershell@v2
+      - name: 💾 Create Backup
+        shell: pwsh
+        run: |
+          Write-Host "╔══════════════════════════════════════════════════╗" -ForegroundColor Cyan
+          Write-Host "║     💾 BACKUP & CLEANUP                         ║" -ForegroundColor Cyan
+          Write-Host "╚══════════════════════════════════════════════════╝" -ForegroundColor Cyan
+          
+          pwsh -File scripts/backup-restore-manager.ps1 -Action backup
+
+      - name: 🧹 System Cleanup
+        shell: pwsh
+        run: |
+          Write-Host "`n🧹 Running System Cleanup..." -ForegroundColor Yellow
+          
+          # تنظيف الملفات المؤقتة
+          Remove-Item -Path "logs/*.tmp" -Force -ErrorAction SilentlyContinue
+          Remove-Item -Path "temp/*" -Recurse -Force -ErrorAction SilentlyContinue
+          
+          Write-Host "✓ Cleanup Completed" -ForegroundColor Green
+
+      - name: 📤 Upload Backup
+        uses: actions/upload-artifact@v3
         with:
-          powershell-version: '7.3'
+          name: system-backup-${{ github.run_number }}
+          path: |
+            backups/*.zip
+            backups/*.json
+          retention-days: 90
 
-      - name: Generate Monitoring Report
-        run: |
-          pwsh -Command {
-            Write-Host "═════════════════════════════════════════" -ForegroundColor Cyan
-            Write-Host "  System Monitoring Report" -ForegroundColor Green
-            Write-Host "═════════════════════════════════════════" -ForegroundColor Cyan
-            
-            $vmsState = Get-Content ".github/example-vms-state.json" | ConvertFrom-Json
-            
-            Write-Host "`n📊 Performance Metrics:" -ForegroundColor Yellow
-            Write-Host "  - Avg CPU Usage: $($vmsState.statistics.averageCpuUsage)%" -ForegroundColor Cyan
-            Write-Host "  - Avg Memory Usage: $($vmsState.statistics.averageMemoryUsage)%" -ForegroundColor Cyan
-            Write-Host "  - Total Jobs Completed: $($vmsState.statistics.totalJobsCompleted)" -ForegroundColor Cyan
-            Write-Host "  - System Health: $($vmsState.statistics.systemHealth)" -ForegroundColor Cyan
-            
-            Write-Host "`n✓ Report Generated Successfully" -ForegroundColor Green
-          }
-
-  tests:
+  # ═══════════════════════════════════════════════════════════════
+  # Job 7: Summary & Notification
+  # ═══════════════════════════════════════════════════════════════
+  summary:
+    name: 📋 Workflow Summary
     runs-on: ubuntu-latest
-    name: Run Tests
-    needs: health-check
+    needs: [health-check, vm-lifecycle, master-election, monitoring, testing, backup-cleanup]
+    if: always()
+    
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v3
-
-      - name: Setup PowerShell
-        uses: actions/setup-powershell@v2
-        with:
-          powershell-version: '7.3'
-
-      - name: Run Unit Tests
+      - name: 📊 Generate Summary
+        shell: pwsh
         run: |
-          pwsh -Command {
-            Write-Host "═════════════════════════════════════════" -ForegroundColor Cyan
-            Write-Host "  Running Unit Tests" -ForegroundColor Green
-            Write-Host "═════════════════════════════════════════" -ForegroundColor Cyan
-            
-            Write-Host "`n✓ Test Suite 1: Configuration Tests" -ForegroundColor Yellow
-            Write-Host "  ✓ Test: Config Load" -ForegroundColor Green
-            Write-Host "  ✓ Test: Validate Schema" -ForegroundColor Green
-            Write-Host "  ✓ Test: Check Defaults" -ForegroundColor Green
-            
-            Write-Host "`n✓ Test Suite 2: VM Management Tests" -ForegroundColor Yellow
-            Write-Host "  ✓ Test: VM Creation" -ForegroundColor Green
-            Write-Host "  ✓ Test: VM Cleanup" -ForegroundColor Green
-            Write-Host "  ✓ Test: Health Check" -ForegroundColor Green
-            
-            Write-Host "`n✓ All Tests Passed!" -ForegroundColor Green
-          }
+          Write-Host "╔════════════════════════════════════════════════════════════╗" -ForegroundColor Green
+          Write-Host "║                                                            ║" -ForegroundColor Green
+          Write-Host "║          ✅ WORKFLOW COMPLETED SUCCESSFULLY ✅            ║" -ForegroundColor Green
+          Write-Host "║                                                            ║" -ForegroundColor Green
+          Write-Host "╚════════════════════════════════════════════════════════════╝" -ForegroundColor Green
+          
+          Write-Host "`n📊 Execution Summary:" -ForegroundColor Yellow
+          Write-Host "  • Health Check: ${{ needs.health-check.result }}" -ForegroundColor Cyan
+          Write-Host "  • VM Lifecycle: ${{ needs.vm-lifecycle.result }}" -ForegroundColor Cyan
+          Write-Host "  • Master Election: ${{ needs.master-election.result }}" -ForegroundColor Cyan
+          Write-Host "  • Monitoring: ${{ needs.monitoring.result }}" -ForegroundColor Cyan
+          Write-Host "  • Testing: ${{ needs.testing.result }}" -ForegroundColor Cyan
+          Write-Host "  • Backup: ${{ needs.backup-cleanup.result }}" -ForegroundColor Cyan
+          
+          Write-Host "`n✨ All Systems Operational!" -ForegroundColor Green
 
-  success:
-    runs-on: ubuntu-latest
-    name: Success Notification
-    needs: [health-check, master-election, vm-creation, monitoring, tests]
-    if: success()
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v3
-
-      - name: Setup PowerShell
-        uses: actions/setup-powershell@v2
-
-      - name: Success Message
+      - name: 🔔 Send Notification
+        if: failure()
         run: |
-          pwsh -Command {
-            Write-Host ""
-            Write-Host "╔════════════════════════════════════════╗" -ForegroundColor Green
-            Write-Host "║                                        ║" -ForegroundColor Green
-            Write-Host "║  ✅ System Running Successfully! ✅  ║" -ForegroundColor Green
-            Write-Host "║                                        ║" -ForegroundColor Green
-            Write-Host "║  All checks passed and running        ║" -ForegroundColor Green
-            Write-Host "╚════════════════════════════════════════╝" -ForegroundColor Green
-            Write-Host ""
-          }
+          echo "⚠️ Workflow failed! Check logs for details."
