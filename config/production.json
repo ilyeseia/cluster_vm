@@ -1,0 +1,11 @@
+{
+  "environment": "production",
+  "api": {
+    "endpoint": "https://api.cluster-vm.prod",
+    "timeout": 30
+  },
+  "logging": {
+    "level": "info",
+    "retentionDays": 30
+  }
+}
