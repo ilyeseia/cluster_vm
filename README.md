@@ -143,3 +143,37 @@ pwsh -File tests/unit-tests.ps1 -TestCategory all
 
 # 5️⃣ بدء المراقبة
 pwsh -File monitoring/advanced-monitoring.ps1 -MonitoringMode dashboard
+🎮 الأوامر الأساسية الموصى بها
+# 📊 عرض الحالة الكاملة
+pwsh -File scripts/system-control.ps1 -Command status
+
+# ⚖️ إعادة توازن النظام
+pwsh -File scripts/system-control.ps1 -Command rebalance
+
+# 🔄 إعادة تشغيل كامل
+pwsh -File scripts/system-control.ps1 -Command restart
+
+# 💊 فحص الصحة الشامل
+pwsh -File scripts/system-control.ps1 -Command health
+
+# 🖥️ إدارة الـ VMs
+pwsh -File scripts/vm-lifecycle-manager.ps1 -Action list
+pwsh -File scripts/vm-lifecycle-manager.ps1 -Action create -Count 1
+
+# 🧪 تشغيل الاختبارات
+pwsh -File tests/unit-tests.ps1 -TestCategory all
+pwsh -File tests/integration-tests.ps1
+pwsh -File tests/performance-tests.ps1
+
+# 📊 المراقبة الفورية
+pwsh -File monitoring/advanced-monitoring.ps1 -MonitoringMode realtime
+
+# ⚡ تحسين الأداء
+pwsh -File scripts/performance-tuner.ps1 -Action optimize
+
+# 📋 توليد التقارير
+pwsh -File monitoring/report-generator.ps1
+
+# 🚨 إجراءات الطوارئ
+pwsh -File scripts/emergency-procedures.ps1 -Procedure emergency-restart
+pwsh -File scripts/emergency-procedures.ps1 -Procedure recovery
