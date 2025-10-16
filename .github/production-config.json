@@ -1,0 +1,57 @@
+{
+  "version": "3.0.0-production",
+  "systemName": "Infinite VM Matrix System",
+  "description": "Self-sustaining VM infrastructure using GitHub Actions",
+  
+  "production": {
+    "enabled": true,
+    "mode": "continuous",
+    "autoScaling": true,
+    "selfHealing": true
+  },
+  
+  "runners": {
+    "maxLifetime": 21000,
+    "renewalThreshold": 18000,
+    "overlap": 300,
+    "minRunners": 3,
+    "maxRunners": 10,
+    "strategy": "rolling-renewal"
+  },
+  
+  "scheduling": {
+    "mainCron": "0 * * * *",
+    "healthCheckCron": "*/15 * * * *",
+    "renewalCron": "*/30 * * * *",
+    "cleanupCron": "0 */6 * * *"
+  },
+  
+  "tailscale": {
+    "enabled": true,
+    "meshNetwork": true,
+    "autoReconnect": true,
+    "exitNodeRotation": true
+  },
+  
+  "persistence": {
+    "stateStorage": "github-artifacts",
+    "backupInterval": 3600,
+    "retentionDays": 90,
+    "encryption": true
+  },
+  
+  "monitoring": {
+    "enabled": true,
+    "metrics": true,
+    "alerts": true,
+    "emailNotifications": true,
+    "webhooks": []
+  },
+  
+  "workload": {
+    "distribution": "round-robin",
+    "loadBalancing": true,
+    "failover": true,
+    "priority": "high-availability"
+  }
+}
