@@ -1,0 +1,114 @@
+name: 🖥️ VM Deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      triggered-by:
+        description: 'Triggered by'
+        required: false
+        default: 'manual'
+      source-account:
+        description: 'Source account'
+        required: false
+        default: '1'
+  schedule:
+    - cron: '0 * * * *'
+
+env:
+  TAILSCALE_AUTH_KEY: ${{ secrets.ACCOUNT_1_TAILSCALE }}
+  GMAIL_USER: ${{ secrets.ACCOUNT_1_GMAIL }}
+  GMAIL_PASS: ${{ secrets.ACCOUNT_1_GMAIL_PASS }}
+
+jobs:
+  deploy-vm:
+    name: 🖥️ Deploy VM
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup Environment
+        shell: bash
+        run: |
+          echo "Setting up VM environment..."
+          wget -q https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/packages-microsoft-prod.deb
+          sudo dpkg -i packages-microsoft-prod.deb
+          sudo apt-get update
+          sudo apt-get install -y powershell
+          curl -fsSL https://tailscale.com/install.sh | sh
+          sudo apt-get install -y xrdp xfce4 xfce4-goodies
+
+      - name: 🔗 Connect Tailscale
+        shell: bash
+        run: |
+          VM_HOSTNAME="vm-acc${{ github.event.inputs.source-account }}-${{ github.run_number }}"
+          sudo tailscale up --authkey=$TAILSCALE_AUTH_KEY --hostname=$VM_HOSTNAME --accept-routes
+          TAILSCALE_IP=$(sudo tailscale ip -4)
+          echo "TAILSCALE_IP=$TAILSCALE_IP" >> $GITHUB_ENV
+          echo "VM_HOSTNAME=$VM_HOSTNAME" >> $GITHUB_ENV
+
+      - name: 👤 Create User
+        shell: bash
+        run: |
+          USERNAME="vmuser"
+          PASSWORD=$(openssl rand -base64 16 | tr -d "=+/" | cut -c1-16)
+          sudo useradd -m -s /bin/bash $USERNAME
+          echo "$USERNAME:$PASSWORD" | sudo chpasswd
+          sudo usermod -aG sudo $USERNAME
+          echo "USERNAME=$USERNAME" >> $GITHUB_ENV
+          echo "PASSWORD=$PASSWORD" >> $GITHUB_ENV
+
+      - name: 🖥️ Configure RDP
+        shell: bash
+        run: |
+          sudo systemctl enable xrdp
+          sudo systemctl start xrdp
+          echo "xfce4-session" | sudo tee /home/$USERNAME/.xsession
+          sudo chown $USERNAME:$USERNAME /home/$USERNAME/.xsession
+
+      - name: 📧 Send Credentials
+        shell: pwsh
+        run: |
+          $emailBody = @"
+          <h2>VM Ready - Account ${{ github.event.inputs.source-account }}</h2>
+          <p><strong>VM:</strong> $env:VM_HOSTNAME</p>
+          <p><strong>IP:</strong> $env:TAILSCALE_IP</p>
+          <p><strong>User:</strong> $env:USERNAME</p>
+          <p><strong>Password:</strong> $env:PASSWORD</p>
+          <p><strong>RDP:</strong> mstsc /v:$($env:TAILSCALE_IP):3389</p>
+"@
+          
+          try {
+              $securePass = ConvertTo-SecureString $env:GMAIL_PASS -AsPlainText -Force
+              $credential = New-Object System.Management.Automation.PSCredential($env:GMAIL_USER, $securePass)
+              
+              Send-MailMessage `
+                  -From $env:GMAIL_USER `
+                  -To $env:GMAIL_USER `
+                  -Subject "VM Ready - Account ${{ github.event.inputs.source-account }}" `
+                  -Body $emailBody `
+                  -BodyAsHtml `
+                  -SmtpServer "smtp.gmail.com" `
+                  -Port 587 `
+                  -UseSsl `
+                  -Credential $credential
+          } catch {
+              Write-Host "Email failed: $_"
+          }
+
+      - name: 🏃 Keep Running
+        shell: bash
+        run: |
+          START_TIME=$(date +%s)
+          MAX_RUNTIME=21000
+          
+          while true; do
+            ELAPSED=$(($(date +%s) - START_TIME))
+            if [ $ELAPSED -ge $MAX_RUNTIME ]; then
+              break
+            fi
+            echo "VM running... ($(($MAX_RUNTIME - $ELAPSED)) seconds remaining)"
+            sleep 300
+          done
