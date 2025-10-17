@@ -1,0 +1,453 @@
+name: 🎭 Multi-Account Orchestrator
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'  # كل 30 دقيقة
+  workflow_dispatch:
+    inputs:
+      force-switch:
+        description: 'Force switch to next account'
+        required: false
+        type: boolean
+        default: false
+      target-account:
+        description: 'Target account (1, 2, or 3)'
+        required: false
+        type: choice
+        options:
+          - 'auto'
+          - '1'
+          - '2'
+          - '3'
+        default: 'auto'
+
+env:
+  CURRENT_ACCOUNT: "1"
+
+jobs:
+  check-all-accounts:
+    name: 📊 Check All Accounts Status
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      current-account: ${{ steps.analyze.outputs.current-account }}
+      next-account: ${{ steps.analyze.outputs.next-account }}
+      should-switch: ${{ steps.analyze.outputs.should-switch }}
+      account-1-quota: ${{ steps.check-1.outputs.remaining }}
+      account-2-quota: ${{ steps.check-2.outputs.remaining }}
+      account-3-quota: ${{ steps.check-3.outputs.remaining }}
+    
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup PowerShell
+        shell: bash
+        run: |
+          wget -q https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/packages-microsoft-prod.deb
+          sudo dpkg -i packages-microsoft-prod.deb
+          sudo apt-get update
+          sudo apt-get install -y powershell
+
+      - name: 📊 Check Account 1
+        id: check-1
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.ACCOUNT_1_TOKEN }}
+        run: |
+          try {
+              $headers = @{
+                  "Authorization" = "Bearer $env:GITHUB_TOKEN"
+                  "Accept" = "application/vnd.github+json"
+              }
+              
+              $owner = "${{ secrets.ACCOUNT_1_USER }}"
+              $url = "https://api.github.com/users/$owner/settings/billing/actions"
+              
+              $usage = Invoke-RestMethod -Uri $url -Headers $headers -Method Get
+              $remaining = $usage.included_minutes - $usage.total_minutes_used
+              $percentage = [math]::Round(($usage.total_minutes_used / $usage.included_minutes) * 100, 2)
+              
+              "remaining=$remaining" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+              "percentage=$percentage" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+              "status=active" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+              
+              Write-Host "Account 1: $remaining minutes remaining ($percentage%)"
+          } catch {
+              "remaining=0" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+              "percentage=100" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+              "status=error" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+              Write-Host "Account 1: Error checking quota"
+          }
+
+      - name: 📊 Check Account 2
+        id: check-2
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.ACCOUNT_2_TOKEN }}
+        run: |
+          try {
+              $headers = @{
+                  "Authorization" = "Bearer $env:GITHUB_TOKEN"
+                  "Accept" = "application/vnd.github+json"
+              }
+              
+              $owner = "${{ secrets.ACCOUNT_2_USER }}"
+              $url = "https://api.github.com/users/$owner/settings/billing/actions"
+              
+              $usage = Invoke-RestMethod -Uri $url -Headers $headers -Method Get
+              $remaining = $usage.included_minutes - $usage.total_minutes_used
+              $percentage = [math]::Round(($usage.total_minutes_used / $usage.included_minutes) * 100, 2)
+              
+              "remaining=$remaining" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+              "percentage=$percentage" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+              "status=active" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+              
+              Write-Host "Account 2: $remaining minutes remaining ($percentage%)"
+          } catch {
+              "remaining=0" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+              "percentage=100" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+              "status=error" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+              Write-Host "Account 2: Error checking quota"
+          }
+
+      - name: 📊 Check Account 3
+        id: check-3
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.ACCOUNT_3_TOKEN }}
+        run: |
+          try {
+              $headers = @{
+                  "Authorization" = "Bearer $env:GITHUB_TOKEN"
+                  "Accept" = "application/vnd.github+json"
+              }
+              
+              $owner = "${{ secrets.ACCOUNT_3_USER }}"
+              $url = "https://api.github.com/users/$owner/settings/billing/actions"
+              
+              $usage = Invoke-RestMethod -Uri $url -Headers $headers -Method Get
+              $remaining = $usage.included_minutes - $usage.total_minutes_used
+              $percentage = [math]::Round(($usage.total_minutes_used / $usage.included_minutes) * 100, 2)
+              
+              "remaining=$remaining" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+              "percentage=$percentage" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+              "status=active" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+              
+              Write-Host "Account 3: $remaining minutes remaining ($percentage%)"
+          } catch {
+              "remaining=0" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+              "percentage=100" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+              "status=error" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+              Write-Host "Account 3: Error checking quota"
+          }
+
+      - name: 🧠 Analyze and Decide
+        id: analyze
+        shell: pwsh
+        run: |
+          Write-Host "Analyzing accounts status..." -ForegroundColor Cyan
+          
+          $accounts = @(
+              @{
+                  id = 1
+                  remaining = [int]"${{ steps.check-1.outputs.remaining }}"
+                  percentage = [double]"${{ steps.check-1.outputs.percentage }}"
+                  status = "${{ steps.check-1.outputs.status }}"
+              },
+              @{
+                  id = 2
+                  remaining = [int]"${{ steps.check-2.outputs.remaining }}"
+                  percentage = [double]"${{ steps.check-2.outputs.percentage }}"
+                  status = "${{ steps.check-2.outputs.status }}"
+              },
+              @{
+                  id = 3
+                  remaining = [int]"${{ steps.check-3.outputs.remaining }}"
+                  percentage = [double]"${{ steps.check-3.outputs.percentage }}"
+                  status = "${{ steps.check-3.outputs.status }}"
+              }
+          )
+          
+          Write-Host "`nAccounts Summary:" -ForegroundColor Yellow
+          foreach ($acc in $accounts) {
+              $color = if ($acc.percentage -ge 90) { "Red" } elseif ($acc.percentage -ge 80) { "Yellow" } else { "Green" }
+              Write-Host "  Account $($acc.id): $($acc.remaining) min ($($acc.percentage)%) - $($acc.status)" -ForegroundColor $color
+          }
+          
+          # تحديد الحساب الحالي
+          $currentAccount = if (Test-Path "state/current-account.txt") {
+              Get-Content "state/current-account.txt"
+          } else {
+              "1"
+          }
+          
+          Write-Host "`nCurrent Active Account: $currentAccount" -ForegroundColor Cyan
+          
+          $currentAccountData = $accounts | Where-Object { $_.id -eq [int]$currentAccount }
+          
+          # تحديد إذا كان يجب التبديل
+          $shouldSwitch = $false
+          $nextAccount = $currentAccount
+          
+          # شروط التبديل
+          if ($currentAccountData.percentage -ge 80 -or $currentAccountData.remaining -lt 400) {
+              Write-Host "Current account quota is low. Finding next account..." -ForegroundColor Yellow
+              
+              # البحث عن أفضل حساب بديل
+              $availableAccounts = $accounts | Where-Object { 
+                  $_.id -ne [int]$currentAccount -and 
+                  $_.percentage -lt 80 -and 
+                  $_.remaining -gt 400 -and
+                  $_.status -eq "active"
+              } | Sort-Object -Property remaining -Descending
+              
+              if ($availableAccounts.Count -gt 0) {
+                  $nextAccount = $availableAccounts[0].id
+                  $shouldSwitch = $true
+                  Write-Host "Will switch to Account $nextAccount (has $($availableAccounts[0].remaining) minutes)" -ForegroundColor Green
+              } else {
+                  Write-Host "No suitable account available for switching!" -ForegroundColor Red
+                  # محاولة استخدام أي حساب متاح
+                  $anyAvailable = $accounts | Where-Object { $_.remaining -gt 0 } | Sort-Object -Property remaining -Descending | Select-Object -First 1
+                  if ($anyAvailable) {
+                      $nextAccount = $anyAvailable.id
+                      $shouldSwitch = $true
+                      Write-Host "Emergency switch to Account $nextAccount (last resort)" -ForegroundColor Yellow
+                  }
+              }
+          } else {
+              Write-Host "Current account has sufficient quota. No switch needed." -ForegroundColor Green
+          }
+          
+          # حفظ النتائج
+          "current-account=$currentAccount" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "next-account=$nextAccount" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "should-switch=$($shouldSwitch.ToString().ToLower())" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          
+          Write-Host "`nDecision:" -ForegroundColor Magenta
+          Write-Host "  Current: Account $currentAccount" -ForegroundColor Cyan
+          Write-Host "  Next: Account $nextAccount" -ForegroundColor Cyan
+          Write-Host "  Should Switch: $shouldSwitch" -ForegroundColor $(if($shouldSwitch){"Yellow"}else{"Green"})
+
+      - name: 💾 Save State
+        shell: bash
+        run: |
+          mkdir -p state
+          echo "${{ steps.analyze.outputs.next-account }}" > state/current-account.txt
+          echo "$(date -u)" > state/last-check.txt
+
+      - name: 📤 Upload State
+        uses: actions/upload-artifact@v4
+        with:
+          name: orchestrator-state-${{ github.run_number }}
+          path: state/
+          retention-days: 30
+
+  trigger-deployment:
+    name: 🚀 Trigger Deployment on Active Account
+    runs-on: ubuntu-latest
+    needs: check-all-accounts
+    if: needs.check-all-accounts.outputs.should-switch == 'false'
+    
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup PowerShell
+        shell: bash
+        run: |
+          wget -q https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/packages-microsoft-prod.deb
+          sudo dpkg -i packages-microsoft-prod.deb
+          sudo apt-get update
+          sudo apt-get install -y powershell
+
+      - name: 🚀 Trigger VM Deployment
+        shell: pwsh
+        env:
+          ACCOUNT_NUM: ${{ needs.check-all-accounts.outputs.current-account }}
+        run: |
+          $accountNum = $env:ACCOUNT_NUM
+          Write-Host "Triggering deployment on Account $accountNum..." -ForegroundColor Cyan
+          
+          # الحصول على التوكن المناسب
+          $token = switch ($accountNum) {
+              "1" { "${{ secrets.ACCOUNT_1_TOKEN }}" }
+              "2" { "${{ secrets.ACCOUNT_2_TOKEN }}" }
+              "3" { "${{ secrets.ACCOUNT_3_TOKEN }}" }
+          }
+          
+          $repo = switch ($accountNum) {
+              "1" { "${{ secrets.ACCOUNT_1_REPO }}" }
+              "2" { "${{ secrets.ACCOUNT_2_REPO }}" }
+              "3" { "${{ secrets.ACCOUNT_3_REPO }}" }
+          }
+          
+          $headers = @{
+              "Authorization" = "Bearer $token"
+              "Accept" = "application/vnd.github+json"
+          }
+          
+          $body = @{
+              ref = "main"
+              inputs = @{
+                  "triggered-by" = "orchestrator"
+                  "source-account" = $accountNum
+              }
+          } | ConvertTo-Json
+          
+          try {
+              $url = "https://api.github.com/repos/$repo/actions/workflows/vm-deployment.yml/dispatches"
+              Invoke-RestMethod -Uri $url -Headers $headers -Method Post -Body $body -ContentType "application/json"
+              Write-Host "Successfully triggered deployment on Account $accountNum" -ForegroundColor Green
+          } catch {
+              Write-Host "Failed to trigger deployment: $_" -ForegroundColor Red
+          }
+
+  switch-account:
+    name: 🔄 Switch to Next Account
+    runs-on: ubuntu-latest
+    needs: check-all-accounts
+    if: needs.check-all-accounts.outputs.should-switch == 'true'
+    
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup PowerShell
+        shell: bash
+        run: |
+          wget -q https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/packages-microsoft-prod.deb
+          sudo dpkg -i packages-microsoft-prod.deb
+          sudo apt-get update
+          sudo apt-get install -y powershell
+
+      - name: 🔄 Execute Account Switch
+        shell: pwsh
+        env:
+          CURRENT_ACCOUNT: ${{ needs.check-all-accounts.outputs.current-account }}
+          NEXT_ACCOUNT: ${{ needs.check-all-accounts.outputs.next-account }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_PASS: ${{ secrets.GMAIL_PASS }}
+        run: |
+          $currentAccount = $env:CURRENT_ACCOUNT
+          $nextAccount = $env:NEXT_ACCOUNT
+          
+          Write-Host "Switching from Account $currentAccount to Account $nextAccount..." -ForegroundColor Yellow
+          
+          # الحصول على بيانات الحسابات
+          $accounts = @{
+              "1" = @{
+                  token = "${{ secrets.ACCOUNT_1_TOKEN }}"
+                  repo = "${{ secrets.ACCOUNT_1_REPO }}"
+                  user = "${{ secrets.ACCOUNT_1_USER }}"
+                  quota = "${{ needs.check-all-accounts.outputs.account-1-quota }}"
+              }
+              "2" = @{
+                  token = "${{ secrets.ACCOUNT_2_TOKEN }}"
+                  repo = "${{ secrets.ACCOUNT_2_REPO }}"
+                  user = "${{ secrets.ACCOUNT_2_USER }}"
+                  quota = "${{ needs.check-all-accounts.outputs.account-2-quota }}"
+              }
+              "3" = @{
+                  token = "${{ secrets.ACCOUNT_3_TOKEN }}"
+                  repo = "${{ secrets.ACCOUNT_3_REPO }}"
+                  user = "${{ secrets.ACCOUNT_3_USER }}"
+                  quota = "${{ needs.check-all-accounts.outputs.account-3-quota }}"
+              }
+          }
+          
+          $nextAccountData = $accounts[$nextAccount]
+          
+          # تشغيل Orchestrator في الحساب التالي
+          try {
+              $headers = @{
+                  "Authorization" = "Bearer $($nextAccountData.token)"
+                  "Accept" = "application/vnd.github+json"
+              }
+              
+              $body = @{
+                  ref = "main"
+                  inputs = @{
+                      "switched-from" = $currentAccount
+                      "auto-start" = "true"
+                  }
+              } | ConvertTo-Json
+              
+              $url = "https://api.github.com/repos/$($nextAccountData.repo)/actions/workflows/orchestrator.yml/dispatches"
+              Invoke-RestMethod -Uri $url -Headers $headers -Method Post -Body $body -ContentType "application/json"
+              
+              Write-Host "Successfully activated Account $nextAccount" -ForegroundColor Green
+              
+              # إرسال إشعار بالتبديل
+              $emailBody = @"
+              <html><body>
+              <h2>Account Switch Notification</h2>
+              <p>The system has automatically switched accounts:</p>
+              <ul>
+              <li><strong>From:</strong> Account $currentAccount</li>
+              <li><strong>To:</strong> Account $nextAccount</li>
+              <li><strong>New Account Quota:</strong> $($nextAccountData.quota) minutes</li>
+              <li><strong>Reason:</strong> Previous account quota depleted</li>
+              <li><strong>Time:</strong> $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss UTC')</li>
+              </ul>
+              <p>The system will continue operating seamlessly on the new account.</p>
+              </body></html>
+"@
+              
+              if ($env:GMAIL_USER -and $env:GMAIL_PASS) {
+                  $securePass = ConvertTo-SecureString $env:GMAIL_PASS -AsPlainText -Force
+                  $credential = New-Object System.Management.Automation.PSCredential($env:GMAIL_USER, $securePass)
+                  
+                  Send-MailMessage `
+                      -From $env:GMAIL_USER `
+                      -To $env:GMAIL_USER `
+                      -Subject "Account Switch: Now using Account $nextAccount" `
+                      -Body $emailBody `
+                      -BodyAsHtml `
+                      -SmtpServer "smtp.gmail.com" `
+                      -Port 587 `
+                      -UseSsl `
+                      -Credential $credential
+                  
+                  Write-Host "Notification email sent" -ForegroundColor Green
+              }
+              
+          } catch {
+              Write-Host "Failed to activate next account: $_" -ForegroundColor Red
+          }
+
+  summary:
+    name: 📋 Generate Summary
+    runs-on: ubuntu-latest
+    needs: [check-all-accounts, trigger-deployment, switch-account]
+    if: always()
+    
+    steps:
+      - name: 📊 Create Summary
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+          # Multi-Account Orchestrator Report
+          
+          ## Account Status
+          
+          | Account | Remaining Quota | Action |
+          |---------|----------------|--------|
+          | Account 1 | ${{ needs.check-all-accounts.outputs.account-1-quota }} min | ${{ needs.check-all-accounts.outputs.current-account == '1' && '🟢 Active' || '⚪ Standby' }} |
+          | Account 2 | ${{ needs.check-all-accounts.outputs.account-2-quota }} min | ${{ needs.check-all-accounts.outputs.current-account == '2' && '🟢 Active' || '⚪ Standby' }} |
+          | Account 3 | ${{ needs.check-all-accounts.outputs.account-3-quota }} min | ${{ needs.check-all-accounts.outputs.current-account == '3' && '🟢 Active' || '⚪ Standby' }} |
+          
+          ## Decision
+          
+          - **Current Account:** ${{ needs.check-all-accounts.outputs.current-account }}
+          - **Next Account:** ${{ needs.check-all-accounts.outputs.next-account }}
+          - **Switch Required:** ${{ needs.check-all-accounts.outputs.should-switch }}
+          
+          ## Actions Taken
+          
+          - Deployment Triggered: ${{ needs.trigger-deployment.result || 'N/A' }}
+          - Account Switched: ${{ needs.switch-account.result || 'N/A' }}
+          
+          ---
+          *Run #${{ github.run_number }} - $(date -u)*
+          EOF
