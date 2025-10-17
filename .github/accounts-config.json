@@ -1,0 +1,60 @@
+{
+  "accounts": [
+    {
+      "id": "account-1",
+      "name": "Primary Account",
+      "githubUser": "user1",
+      "repository": "user1/vm-infrastructure",
+      "priority": 1,
+      "quotaLimit": 2000,
+      "warningThreshold": 80,
+      "criticalThreshold": 95,
+      "active": true,
+      "apiToken": "ACCOUNT_1_TOKEN",
+      "tailscaleKey": "ACCOUNT_1_TAILSCALE",
+      "gmailUser": "ACCOUNT_1_GMAIL",
+      "gmailPass": "ACCOUNT_1_GMAIL_PASS"
+    },
+    {
+      "id": "account-2",
+      "name": "Secondary Account",
+      "githubUser": "user2",
+      "repository": "user2/vm-infrastructure",
+      "priority": 2,
+      "quotaLimit": 2000,
+      "warningThreshold": 80,
+      "criticalThreshold": 95,
+      "active": false,
+      "apiToken": "ACCOUNT_2_TOKEN",
+      "tailscaleKey": "ACCOUNT_2_TAILSCALE",
+      "gmailUser": "ACCOUNT_2_GMAIL",
+      "gmailPass": "ACCOUNT_2_GMAIL_PASS"
+    },
+    {
+      "id": "account-3",
+      "name": "Tertiary Account",
+      "githubUser": "user3",
+      "repository": "user3/vm-infrastructure",
+      "priority": 3,
+      "quotaLimit": 2000,
+      "warningThreshold": 80,
+      "criticalThreshold": 95,
+      "active": false,
+      "apiToken": "ACCOUNT_3_TOKEN",
+      "tailscaleKey": "ACCOUNT_3_TAILSCALE",
+      "gmailUser": "ACCOUNT_3_GMAIL",
+      "gmailPass": "ACCOUNT_3_GMAIL_PASS"
+    }
+  ],
+  "rotation": {
+    "enabled": true,
+    "autoSwitch": true,
+    "notifyOnSwitch": true,
+    "cooldownMinutes": 60
+  },
+  "sharedResources": {
+    "tailscaleNetwork": "shared-network",
+    "emailNotifications": true,
+    "centralDashboard": "https://your-dashboard.com"
+  }
+}
